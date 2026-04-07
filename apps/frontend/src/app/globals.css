@@ -1,0 +1,360 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Design Tokens — CSS Custom Properties (RGB triplets)
+ *
+ * Convention: value = "R G B" so Tailwind can inject alpha via
+ *   rgb(var(--token) / <alpha-value>)
+ *
+ * Override primary scale per school by setting --primary-* on :root via JS.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ── Layer 1: Neutral Foundation (Light Mode) ───────────────────────────── */
+  --background: 255 255 255;         /* 100% White (Main BG) */
+  --foreground: 41 46 51;            /* 18% (Body text — softened for halation) */
+  --heading: 24 28 32;               /* 11% (Headings — high contrast) */
+
+  /* ── Surface ────────────────────────────────────────────────────────────── */
+  --card: 248 250 252;               /* ~97% (Sidebar / Anchor / Cards) */
+  --card-foreground: 41 46 51;
+
+  /* ── Muted ──────────────────────────────────────────────────────────────── */
+  --muted: 241 245 249;              /* subtle backgrounds, badges, disabled */
+  --muted-foreground: 84 92 102;     /* 35% (Secondary text, hints, icons) */
+
+  /* ── Accent (hover / active) ────────────────────────────────────────────── */
+  --accent: 241 245 249;
+  --accent-foreground: 24 28 32;
+
+  /* ── Border ─────────────────────────────────────────────────────────────── */
+  --border: 212 220 229;             /* 85% (Dividers, card borders — no pure black) */
+  --input: 203 213 225;              /* input borders */
+  --ring: 59 130 246;                /* focus ring */
+
+  /* ── Popover / Overlay ──────────────────────────────────────────────────── */
+  --popover: 255 255 255;
+  --popover-foreground: 24 28 32;
+
+  /* ── Destructive (alias for danger in radix components) ─────────────────── */
+  --destructive: 220 38 38;
+  --destructive-foreground: 255 255 255;
+
+  /* ── Separator ──────────────────────────────────────────────────────────── */
+  --separator: 212 220 229;
+
+  /* ── Primary (brand — overridable per school) ───────────────────────────── */
+  --primary-50:  239 246 255;
+  --primary-100: 219 234 254;
+  --primary-200: 191 219 254;
+  --primary-300: 147 197 253;
+  --primary-400: 96 165 250;
+  --primary-500: 59 130 246;
+  --primary-600: 37 99 235;
+  --primary-700: 29 78 216;
+  --primary-800: 30 64 175;
+  --primary-900: 30 58 138;
+  --primary-950: 23 37 84;
+  --primary-foreground: 255 255 255; /* text on primary bg */
+
+  /* ── Danger ─────────────────────────────────────────────────────────────── */
+  --danger-50:  254 242 242;
+  --danger-500: 239 68 68;
+  --danger-600: 220 38 38;
+  --danger-700: 185 28 28;
+  --danger-foreground: 255 255 255;
+
+  /* ── Success ────────────────────────────────────────────────────────────── */
+  --success-50:  240 253 244;
+  --success-500: 34 197 94;
+  --success-600: 22 163 74;
+  --success-700: 21 128 61;
+  --success-foreground: 255 255 255;
+
+  /* ── Warning ────────────────────────────────────────────────────────────── */
+  --warning-50:  255 251 235;
+  --warning-500: 245 158 11;
+  --warning-600: 217 119 6;
+  --warning-700: 180 83 9;
+  --warning-foreground: 255 255 255;
+
+  /* ── Layer 3: Semantic Communication (OKLCH Balanced Charts) ────────────── */
+  /* L=0.7 C=0.15 across all hues for perceptually equal brightness */
+  --chart-1: 105 178 255; /* Blue */
+  --chart-2: 0 196 175;   /* Teal */
+  --chart-3: 196 153 255; /* Purple */
+  --chart-4: 228 159 78;  /* Orange */
+  --chart-5: 255 143 161; /* Pink */
+  --chart-6: 0 194 218;   /* Cyan */
+  --chart-1-light: 239 246 255;
+  --chart-2-light: 236 253 245;
+  --chart-3-light: 245 243 255;
+  --chart-4-light: 255 251 235;
+  --chart-5-light: 255 241 242;
+  --chart-6-light: 236 254 255;
+
+  /* ── Semantic Surfaces (for badges/cards) ──────────────────── */
+  --surface-blue:    219 234 254;
+  --surface-emerald: 209 250 229;
+  --surface-amber:   254 243 199;
+  --surface-rose:    255 228 230;
+  --surface-violet:  237 233 254;
+  --surface-sky:     224 242 254;
+
+  /* ── Radius ─────────────────────────────────────────────────────────────── */
+  --radius: 0.5rem;
+}
+
+/* ── Dark mode ──────────────────────────────────────────────────────────────
+ * Activated by adding class="dark" on <html>.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+.dark {
+  /* ── Neutral Foundation (Dark Mode) ── */
+  --background: 2 6 23;            /* Slate-950 */
+  --foreground: 248 250 252;       /* Slate-50 */
+  --heading: 255 255 255;          /* Pure White */
+
+  --card: 15 23 42;                /* Slate-900 */
+  --card-foreground: 241 245 249;  /* Slate-100 */
+
+  --muted: 30 41 59;               /* Slate-800 */
+  --muted-foreground: 148 163 184; /* Slate-400 */
+
+  --accent: 30 41 59;
+  --accent-foreground: 248 250 252;
+
+  --border: 30 41 59;
+  --input: 30 41 59;
+  --ring: 59 130 246;
+
+  --popover: 15 23 42;
+  --popover-foreground: 248 250 252;
+
+  --destructive-foreground: 15 23 42;
+  --separator: 30 41 59;
+
+  /* ── Semantic Surfaces (Dark) ── */
+  --surface-blue:    30 58 138;
+  --surface-emerald: 6 78 59;
+  --surface-amber:   120 53 15;
+  --surface-rose:    136 19 55;
+  --surface-violet:  76 29 149;
+  --surface-sky:     12 74 110;
+
+  /* Primary — scale inverted for dark surfaces */
+  --primary-50:  23 37 84;
+  --primary-100: 30 58 138;
+  --primary-200: 30 64 175;
+  --primary-300: 29 78 216;
+  --primary-400: 37 99 235;
+  --primary-500: 59 130 246;
+  --primary-600: 96 165 250;
+  --primary-700: 147 197 253;
+  --primary-800: 191 219 254;
+  --primary-900: 219 234 254;
+  --primary-950: 239 246 255;
+  --primary-foreground: 15 23 42;
+
+  --danger-50:  69 10 10;
+  --danger-500: 239 68 68;
+  --danger-600: 248 113 113;
+  --danger-700: 252 165 165;
+  --danger-foreground: 15 23 42;
+
+  --success-50:  5 46 22;
+  --success-500: 34 197 94;
+  --success-600: 74 222 128;
+  --success-700: 134 239 172;
+  --success-foreground: 15 23 42;
+
+  --warning-50:  69 26 3;
+  --warning-500: 245 158 11;
+  --warning-600: 251 191 36;
+  --warning-700: 253 224 71;
+  --warning-foreground: 15 23 42;
+
+  --chart-1:       96 165 250;   --chart-1-light: 23 37 84;
+  --chart-2:       52 211 153;   --chart-2-light: 6 78 59;
+  --chart-3:       167 139 250;  --chart-3-light: 46 16 101;
+  --chart-4:       251 191 36;   --chart-4-light: 69 26 3;
+  --chart-5:       251 113 133;  --chart-5-light: 76 5 25;
+  --chart-6:       34 211 238;   --chart-6-light: 8 51 68;
+}
+
+/* ── Base layer ─────────────────────────────────────────────────────────────── */
+
+@layer base {
+  * {
+    border-color: rgb(var(--border));
+  }
+
+  body {
+    background-color: rgb(var(--background));
+    color: rgb(var(--foreground));
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--ring));
+    outline-offset: 2px;
+  }
+}
+
+/* ── Custom scrollbar ─────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted-foreground));
+}
+
+/* Finance modal list scrollbar: hidden by default, visible on hover */
+.finance-hover-scrollbar {
+  scrollbar-width: none;
+}
+
+.finance-hover-scrollbar:hover {
+  scrollbar-width: thin;
+}
+
+.finance-hover-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.finance-hover-scrollbar:hover::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.finance-hover-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.finance-hover-scrollbar::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 999px;
+}
+
+.finance-hover-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgb(var(--muted-foreground));
+}
+
+/* ── Custom Animations ───────────────────────────────────────────────────── */
+
+@keyframes pulse-soft {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+}
+
+@keyframes shimmer-text {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+.animate-shimmer-text {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--foreground)) 0%,
+    rgb(var(--primary-400)) 50%,
+    rgb(var(--foreground)) 100%
+  );
+  background-size: 200% auto;
+  color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: shimmer-text 3s linear infinite;
+}
+
+/* ─── TipTap Exam Paper Editor ─────────────────────────────── */
+
+.exam-editor-content {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.exam-editor-content p {
+  margin-bottom: 0.25em;
+}
+
+.exam-editor-content h1,
+.exam-editor-content h2,
+.exam-editor-content h3 {
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+}
+
+.exam-editor-content ul,
+.exam-editor-content ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.exam-editor-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 0.5em 0;
+}
+
+.exam-editor-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+}
+
+.exam-editor-content td,
+.exam-editor-content th {
+  border: 1px solid #d1d5db;
+  padding: 6px 10px;
+  min-width: 60px;
+}
+
+.exam-editor-content th {
+  background-color: #f3f4f6;
+  font-weight: 600;
+}
+
+.exam-editor-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #9ca3af;
+  pointer-events: none;
+  height: 0;
+}
+
+.exam-editor-content .ProseMirror-focused {
+  outline: none;
+}

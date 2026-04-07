@@ -1,0 +1,152 @@
+When creating an exam, the following fields must be included:
+
+Exam Title (e.g., Mid-Term Math Exam)
+Exam Type (e.g., Unit Test, Mid-Term, Final, Quiz)
+Class & Section
+Subject (filtered based on the selected class)
+Created By / Invigilator Teacher (dropdown from teachers list)
+Exam Date & Time
+Duration (in hours)
+Total Marks
+Passing Marks
+Weightage (% contribution toward annual result, optional)
+Syllabus / Topics Covered (text or file upload)
+Status (Draft, Scheduled, Ongoing, Completed)
+
+Each class-section can have multiple exams per subject throughout the year.
+<<<<<<< HEAD
+Student Results
+=======
+
+Student Results
+
+Grading Configuration:
+- GradeScale entity: configurable per school/academic year with fields { name, thresholds[] }
+  Each threshold: { minPercent, maxPercent, grade, gradePoint }
+  Example: [ { 90-100, "A+", 4.0 }, { 80-89, "A", 3.7 }, { 70-79, "B", 3.0 }, ... { 0-39, "F", 0.0 } ]
+- Global MarksConfig: { maxDecimalPlaces: 2, roundingMode: "HALF_UP" }
+- calcGrade(marks, totalMarks, gradeScale, marksConfig):
+  1. percent = (marks / totalMarks) * 100
+  2. Round percent to marksConfig.maxDecimalPlaces using marksConfig.roundingMode
+  3. Match against gradeScale.thresholds to return { grade, gradePoint }
+  4. If result.isAbsent == true → skip numeric grading, return grade = "N/A", marks = null
+
+Result Model & Fields:
+>>>>>>> a7277d92e64ad9b5641d24561633327a3507229e
+Each student is enrolled in a specific class-section and automatically has result slots created for every exam associated with that class-section. The result entry form should include:
+
+Student Name & Roll Number (auto-linked)
+Exam Name & Subject (auto-linked)
+<<<<<<< HEAD
+Marks Obtained
+Grade (auto-calculated based on grading scale)
+Remarks / Comments by Teacher
+Absent/Present toggle (if absent, marks are marked N/A)
+Result Status (Pass / Fail, auto-calculated based on passing marks)
+=======
+Marks Obtained (validated: ≥ 0, ≤ totalMarks, respects maxDecimalPlaces; grace/bonus marks tracked separately)
+Grade (auto-calculated via calcGrade using the active GradeScale)
+Remarks / Comments by Teacher
+Absent/Present toggle — isAbsent boolean: when true, marks forced to null, grade = "N/A", calcGrade bypassed
+Result Status (Pass / Fail, auto-calculated: marks >= exam.passingMarks)
+
+Audit & Locking:
+- Audit fields: createdBy, createdAt, updatedBy, updatedAt (populated automatically)
+- result.status enum: Draft | Published | Locked
+  • Draft: editable by assigned teacher / admin
+  • Published: visible to students/parents; editable by teacher until locked
+  • Locked: immutable — edits rejected; only unlockable by Admin
+- result.approvalStatus: { approverId, approvedAt } — publication requires approval by admin/head-of-department before status transitions from Draft → Published
+
+Access Controls for Result Entry:
+- createResult / updateResult gated by role:
+  • AssignedTeacher: can enter/edit results for their own exams only (must match exam.createdBy or exam.invigilatorId)
+  • SubjectTeacher: can enter/edit for exams in their subject assignments
+  • Admin: full access to all results
+- validateResultSave hook enforces: precision rules, negative-mark rules, grace/bonus validation, and approval requirement before publishing
+>>>>>>> a7277d92e64ad9b5641d24561633327a3507229e
+
+Combined Result Tab (Per Student)
+Each student should have a dedicated profile page with a "Combined Results" tab that shows:
+
+A consolidated table of all exams taken across all subjects for their class
+Columns: Subject, Exam Title, Exam Type, Date, Total Marks, Marks Obtained, Grade, Pass/Fail
+<<<<<<< HEAD
+Summary section showing: Total Marks across all exams, Total Obtained Marks, Overall Percentage, Overall Grade, and Rank in class (optional)
+Filter options: by subject, by exam type, by date range
+Option to download/print the result card as a PDF
+=======
+Summary section showing:
+  - Total Marks: sum of totalMarks across included exams
+  - Total Obtained Marks: sum of marksObtained (Absent treated as 0)
+  - Overall Percentage: sum(marks_obtained * exam_weight) / sum(total_marks * exam_weight) * 100
+    (If no weightage is set on any exam, fallback to simple: totalObtained / totalMaxMarks * 100)
+  - Overall Grade: map Overall Percentage against the active GradeScale (same thresholds as individual exams)
+  - Rank in class: absolute rank by Overall Percentage descending within the class-section
+    Ties: students with identical percentage share the same rank (dense ranking); next rank skips accordingly
+    Percentile: optional display = ((totalStudents - rank) / totalStudents) * 100
+
+Exam Inclusion Criteria:
+- Include only exams where exam.status == "Completed"
+- Exclude exams with status Draft or Scheduled
+- Absent exams: isAbsent == true → marks treated as 0 in totals; grade shown as "N/A" in the row
+
+Weightage Handling:
+- exam.weightage (optional % from exam creation) participates in Overall Percentage when set
+- If any exam in the set has a weightage, all exams must use weighted formula; exams without explicit weightage default to weightage = 1.0
+
+Filter Behavior:
+- Filter options: by subject, by exam type, by date range
+- Applying filters recalculates summary metrics (Total, Percentage, Grade, Rank) based on the filtered subset only
+- Rank recalculates within the same filtered context for all students in the class
+
+Access Controls:
+- Student: view own combined results only
+- Parent: view linked child's combined results only
+- Teacher: view combined results for students in their assigned classes/sections
+- Admin: view all students' combined results
+
+PDF Export:
+- Option to download/print the result card as a PDF
+- Template: header (school logo, student name, class, roll number, academic year), consolidated table, summary section (totals, percentage, grade, rank), footer (generation timestamp, "This is a computer-generated document")
+- Privacy/Compliance: result data storage and transmission must follow FERPA/GDPR rules; apply data minimization — PDF contains only the requesting student's data, no other student info; export logs the action in audit trail
+>>>>>>> a7277d92e64ad9b5641d24561633327a3507229e
+
+Teacher TAB
+Each teacher should be able to:
+
+View all exams they have created or are assigned to
+<<<<<<< HEAD
+Enter and edit student results for their exams
+See which students are missing results
+View class-wise performance analytics (average marks, highest/lowest scorer, pass/fail ratio)
+=======
+  - "Assigned to" = teacher is listed as exam.createdBy OR exam.invigilatorId
+  - "Created By / Invigilator" are distinct roles: creator owns the exam definition; invigilator supervises conduct; both can enter results
+
+Enter and edit student results for their exams
+  - Editable while exam result.status is Draft or Published; rejected once Locked
+  - Edits after initial entry require a justification note (stored in audit trail)
+  - All changes are audit-logged (who, when, old value, new value)
+  - Admin/HOD approval required before result.status can transition Draft → Published
+
+Bulk Operations:
+  - CSV bulk result entry: upload CSV (rollNumber, marks, isAbsent, remarks) → validate & import
+  - Bulk notifications: notify students/parents via in-app notification or email when results are published
+  - Analytics export: download class performance data as CSV/Excel
+
+See which students are missing results
+  - Visual indicator (badge/highlight) on students with no result entry or Draft results
+  - Notification/reminder: teacher receives a reminder N days before result submission deadline
+
+View class-wise performance analytics (average marks, highest/lowest scorer, pass/fail ratio)
+  - Trend analysis: compare performance across exams over time (line chart)
+  - Section comparisons: side-by-side section averages for the same exam
+  - Export/download analytics as PDF or CSV
+
+Result Finalization:
+  - Teacher submits results for approval → Admin/HOD reviews → approves or requests corrections
+  - Upon approval, result.status transitions to Published (visible to students/parents)
+  - Admin can subsequently Lock results to prevent further changes
+>>>>>>> a7277d92e64ad9b5641d24561633327a3507229e
+

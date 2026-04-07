@@ -1,0 +1,6 @@
+export { StatCard } from './stat-card'
+export { FeeCollectionCard } from './fee-collection-card'
+export { AttendanceChart } from './attendance-chart'
+export { QuickActions } from './quick-actions'
+export { PeopleStats } from './people-stats'
+export { UpcomingEvents } from './upcoming-events'

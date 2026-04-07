@@ -1,0 +1,2 @@
+-- Baseline marker migration.
+-- Intentionally left empty because schema objects already exist in the target database.

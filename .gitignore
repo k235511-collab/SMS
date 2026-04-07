@@ -1,0 +1,141 @@
+# # Dependencies
+# node_modules/
+
+# # Build outputs
+# dist/
+# !apps/backend/dist/
+# apps/backend/dist/*
+# !apps/backend/dist/vercel.js
+# .next/
+# out/
+
+# # Turbo
+# .turbo/
+
+# # Environment variables
+# .env
+# .env.local
+# .env.*.local
+
+# # IDE
+# .vscode/
+# .idea/
+# *.swp
+# *.swo
+
+# # OS
+# .DS_Store
+# Thumbs.db
+
+# # Debug
+# npm-debug.log*
+# pnpm-debug.log*
+
+# # Prisma
+# apps/backend/prisma/*.db
+# apps/backend/prisma/migrations/**/migration_lock.toml
+
+# # Test
+# coverage/
+
+
+
+# ------------------------------------------------------------
+# Dependencies / Package managers
+# ------------------------------------------------------------
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.yarn-cache/
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# ------------------------------------------------------------
+# Build outputs / caches
+# ------------------------------------------------------------
+dist/
+build/
+.next/
+out/
+.turbo/
+.cache/
+.eslintcache
+*.tsbuildinfo
+
+# Keep only required backend bundle artifact (your project-specific rule)
+!apps/backend/dist/
+apps/backend/dist/*
+!apps/backend/dist/vercel.js
+
+# ------------------------------------------------------------
+# Runtime / temp / logs / pids
+# ------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+*.tmp
+
+# ------------------------------------------------------------
+# Environment / secrets
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# ------------------------------------------------------------
+# IDE / editor
+# ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*.orig
+
+# Cursor / local AI metadata
+.cursor/
+.agent/
+.agents/
+*.cursor-tmp
+
+# ------------------------------------------------------------
+# OS files
+# ------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ------------------------------------------------------------
+# Test / coverage
+# ------------------------------------------------------------
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# ------------------------------------------------------------
+# Prisma / DB local artifacts
+# ------------------------------------------------------------
+apps/backend/prisma/*.db
+apps/backend/prisma/*.db-journal
+apps/backend/prisma/migrations/**/migration_lock.toml
+
+# ------------------------------------------------------------
+# Misc artifacts
+# ------------------------------------------------------------
+*.tgz
+*.zip
+*.local

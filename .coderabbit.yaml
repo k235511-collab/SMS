@@ -1,0 +1,6 @@
+yamlreviews:
+  instructions: |
+    - Always check for null pointer exceptions
+    - Enforce camelCase naming
+    - Flag any hardcoded API keys
+    - Suggest unit tests for every new function

@@ -1,0 +1,5 @@
+export { CreateStudentDto, UpdateStudentDto } from './student.dto'
+export { GetStudentsDto } from './get-students.dto'
+export { StudentStatsDto } from './student-stats.dto'
+export { PromoteStudentsDto } from './promote-students.dto'
+export { MarkAsLeftDto } from './mark-as-left.dto'
