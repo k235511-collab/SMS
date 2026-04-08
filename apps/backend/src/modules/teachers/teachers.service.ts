@@ -557,14 +557,13 @@ export class TeachersService {
   }
 
   /**
-   * Sync a teacher's class & section assignments.
-   * Accepts an array of { classId, sectionIds?: string[] }.
-   * - If sectionIds is empty/undefined → class-level assignment (sectionId = null).
-   * - If sectionIds has entries → one assignment per section, no class-level row.
+   * Sync a teacher's teaching assignments for an academic year.
    *
-   * Strategy: deactivate ALL existing non-subject assignments first, then
-   * reactivate or create each desired pair. This avoids orphan/duplicate issues
-   * caused by PostgreSQL treating NULLs as distinct in unique constraints.
+   * Role rules:
+   * - Class Teacher rows are stored as subjectId=null and sectionId is required.
+   * - Subject Teacher rows are stored with subjectId set and sectionId optional.
+   *   If sectionIds is empty for subject-teacher mode, the row applies to all
+   *   sections in the class (sectionId=null).
    */
   async syncClasses(
     teacherId: string,
@@ -574,50 +573,91 @@ export class TeachersService {
       classId: string
       sectionIds?: string[]
       subjectIds?: string[]
+      isClassTeacher?: boolean
+      isSubjectTeacher?: boolean
       academicYearId?: string
     }>,
   ) {
     await this.findById(teacherId, schoolId)
 
-    const teacher = await this.prisma.teacher.findUnique({
-      where: { id: teacherId },
-      select: { classTeacherOfId: true },
-    })
+    type DesiredRow = {
+      classId: string
+      sectionId: string | null
+      subjectId: string | null
+      academicYearId: string | null
+    }
 
-    // Build desired set of exact teaching rows
+    // Build desired set of exact teaching rows.
     const desired: Array<{
       classId: string
       sectionId: string | null
-      subjectId: string
+      subjectId: string | null
       academicYearId: string | null
     }> = []
+
     for (const a of assignments) {
       const effectiveYearId = a.academicYearId ?? academicYearId ?? null
-      const sectionIds = a.sectionIds && a.sectionIds.length > 0 ? a.sectionIds : [null]
+      const sectionIds = [...new Set((a.sectionIds || []).filter(Boolean))]
       const subjectIds = [...new Set((a.subjectIds || []).filter(Boolean))]
+      const isClassTeacher = a.isClassTeacher === true
+      const isSubjectTeacher = a.isSubjectTeacher === true || (a.isSubjectTeacher !== false && subjectIds.length > 0)
 
-      if (subjectIds.length === 0) {
-        throw new BadRequestException('Each teaching assignment must include at least one subject')
+      if (!isClassTeacher && !isSubjectTeacher) {
+        throw new BadRequestException('Each assignment must include at least one role')
       }
 
-      for (const subjectId of subjectIds) {
+      if (isClassTeacher && sectionIds.length === 0) {
+        throw new BadRequestException('Please select at least one section for each class-teacher assignment')
+      }
+
+      if (isSubjectTeacher && subjectIds.length === 0) {
+        throw new BadRequestException('Each subject-teacher assignment must include at least one subject')
+      }
+
+      if (isClassTeacher) {
         for (const sectionId of sectionIds) {
           desired.push({
             classId: a.classId,
             sectionId,
-            subjectId,
+            subjectId: null,
             academicYearId: effectiveYearId,
           })
         }
       }
+
+      if (isSubjectTeacher) {
+        const subjectSectionIds = sectionIds.length > 0 ? sectionIds : [null]
+        for (const subjectId of subjectIds) {
+          for (const sectionId of subjectSectionIds) {
+            desired.push({
+              classId: a.classId,
+              sectionId,
+              subjectId,
+              academicYearId: effectiveYearId,
+            })
+          }
+        }
+      }
+    }
+
+    // Deduplicate desired rows generated from toggles.
+    const desiredRows: DesiredRow[] = []
+    const desiredKeys = new Set<string>()
+    for (const row of desired) {
+      const key = `${row.classId}:${row.sectionId ?? 'null'}:${row.subjectId ?? 'null'}:${row.academicYearId ?? 'null'}`
+      if (desiredKeys.has(key)) continue
+      desiredKeys.add(key)
+      desiredRows.push(row)
     }
 
     // Validate referenced classes, sections, and subjects
-    const classIds = [...new Set(desired.map((d) => d.classId))]
+    const classIds = [...new Set(desiredRows.map((d) => d.classId))]
     const sectionIds = [
-      ...new Set(desired.map((d) => d.sectionId).filter((id): id is string => id !== null)),
+      ...new Set(desiredRows.map((d) => d.sectionId).filter((id): id is string => id !== null)),
     ]
-    const subjectIds = [...new Set(desired.map((d) => d.subjectId))]
+    const subjectIds = [
+      ...new Set(desiredRows.map((d) => d.subjectId).filter((id): id is string => id !== null)),
+    ]
 
     const [classes, sections, subjects] = await Promise.all([
       this.prisma.class.findMany({
@@ -649,15 +689,52 @@ export class TeachersService {
       if (row.sectionId && sectionsMap.get(row.sectionId) !== row.classId) {
         throw new BadRequestException('Section does not belong to the selected class')
       }
-      if (subjectsMap.get(row.subjectId) !== row.classId) {
+      if (row.subjectId && subjectsMap.get(row.subjectId) !== row.classId) {
         throw new BadRequestException('Subject does not belong to the selected class')
       }
     }
 
-    // Check for conflicts: same class + subject + overlapping section in the same academic year
-    if (desired.length > 0) {
-      const desiredClassIds = [...new Set(desired.map((d) => d.classId))]
-      const desiredSubjectIds = [...new Set(desired.map((d) => d.subjectId))]
+    // ── Conflict check: class-teacher section rows (subjectId=null) ─────────
+    const desiredClassTeacherRows = desiredRows.filter((d) => d.subjectId === null)
+    if (desiredClassTeacherRows.length > 0) {
+      const desiredClassIds = [...new Set(desiredClassTeacherRows.map((d) => d.classId))]
+      const desiredSectionIds = [
+        ...new Set(desiredClassTeacherRows.map((d) => d.sectionId).filter((id): id is string => id !== null)),
+      ]
+      const conflictingClassTeachers = await this.prisma.teacherClassAssignment.findMany({
+        where: {
+          schoolId,
+          isActive: true,
+          teacherId: { not: teacherId },
+          classId: { in: desiredClassIds },
+          sectionId: { in: desiredSectionIds },
+          subjectId: null,
+          ...this.buildAssignmentAcademicYearFilter(academicYearId),
+        },
+        include: {
+          class: { select: { name: true } },
+          section: { select: { name: true } },
+          teacher: { select: { firstName: true, lastName: true } },
+        },
+      })
+
+      if (conflictingClassTeachers.length > 0) {
+        const conflicts = conflictingClassTeachers.map((row) => {
+          const teacherName = `${row.teacher.firstName} ${row.teacher.lastName}`
+          const label = row.section?.name
+            ? `${row.class.name} (${row.section.name})`
+            : row.class.name
+          return `${label} already has class teacher ${teacherName}`
+        })
+        throw new ConflictException([...new Set(conflicts)].join('; '))
+      }
+    }
+
+    // ── Conflict check: subject-teacher rows ────────────────────────────────
+    const desiredSubjectRows = desiredRows.filter((d): d is DesiredRow & { subjectId: string } => d.subjectId !== null)
+    if (desiredSubjectRows.length > 0) {
+      const desiredClassIds = [...new Set(desiredSubjectRows.map((d) => d.classId))]
+      const desiredSubjectIds = [...new Set(desiredSubjectRows.map((d) => d.subjectId))]
       const conflicting = await this.prisma.teacherClassAssignment.findMany({
         where: {
           schoolId,
@@ -677,8 +754,9 @@ export class TeachersService {
 
       // Check each desired row against existing assignments from other teachers
       const conflicts: string[] = []
-      for (const d of desired) {
+      for (const d of desiredSubjectRows) {
         for (const c of conflicting) {
+          if (!c.subjectId) continue
           if (c.classId !== d.classId || c.subjectId !== d.subjectId) continue
           const sameSection = c.sectionId === d.sectionId
           const otherHasWholeClass = c.sectionId === null
@@ -702,7 +780,7 @@ export class TeachersService {
       }
     }
 
-    // Manage year-specific teaching assignments while preserving class-teacher broad rows
+    // Manage year-specific teaching assignments.
     const existing = await this.prisma.teacherClassAssignment.findMany({
       where: {
         teacherId,
@@ -719,20 +797,10 @@ export class TeachersService {
       },
     })
 
-    const managedExisting = existing.filter((row) => {
-      const isClassTeacherBroadRow =
-        teacher?.classTeacherOfId &&
-        row.classId === teacher.classTeacherOfId &&
-        row.sectionId === null &&
-        row.subjectId === null
-
-      return !isClassTeacherBroadRow
-    })
-
     // Run all mutating operations in a single transaction
     await this.prisma.$transaction(async (tx) => {
       // Step 1: Deactivate all managed assignments in the selected year scope
-      const activeIds = managedExisting.filter((a) => a.isActive).map((a) => a.id)
+      const activeIds = existing.filter((a) => a.isActive).map((a) => a.id)
       if (activeIds.length > 0) {
         await tx.teacherClassAssignment.updateMany({
           where: { id: { in: activeIds } },
@@ -742,8 +810,8 @@ export class TeachersService {
 
       // Step 2: For each desired row, reactivate an existing record or create a new one.
       const usedIds = new Set<string>()
-      for (const d of desired) {
-        const match = managedExisting.find(
+      for (const d of desiredRows) {
+        const match = existing.find(
           (e) =>
             e.classId === d.classId &&
             e.sectionId === d.sectionId &&
@@ -774,7 +842,7 @@ export class TeachersService {
 
       // Step 3: Hard-delete leftover managed duplicates to keep the table clean
       const keepIds = new Set(usedIds)
-      const toDelete = managedExisting.filter((e) => !keepIds.has(e.id)).map((e) => e.id)
+      const toDelete = existing.filter((e) => !keepIds.has(e.id)).map((e) => e.id)
       if (toDelete.length > 0) {
         await tx.teacherClassAssignment.deleteMany({
           where: { id: { in: toDelete } },

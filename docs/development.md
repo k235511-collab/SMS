@@ -80,6 +80,38 @@ pnpm quality:backend:build
 
 On some Windows setups, backend Jest runs are most reliable with `--runInBand`, which is already baked into the root quality command.
 
+## Teacher Assignment Sync Contract
+
+Use `PATCH /teachers/:id/sync-classes` with a role-aware payload:
+
+```json
+{
+	"academicYearId": "<year-id>",
+	"assignments": [
+		{
+			"classId": "<class-id>",
+			"sectionIds": ["<section-id>"],
+			"subjectIds": ["<subject-id>"],
+			"isClassTeacher": true,
+			"isSubjectTeacher": true
+		}
+	]
+}
+```
+
+Rules enforced by backend:
+
+- each class entry must include at least one role (`isClassTeacher` or `isSubjectTeacher`)
+- class-teacher role requires at least one `sectionId`
+- subject-teacher role requires at least one `subjectId`
+- class-teacher conflicts are checked per class+section
+- subject-teacher conflicts are checked per class+subject (+ section overlap)
+
+`GET /teachers/my-classes` returns mixed assignment rows. Frontend should split cards by role using `subject`:
+
+- `subject = null` -> class-teacher section cards
+- `subject != null` -> subject-teacher load cards
+
 ## Backend Vercel Notes
 
 - root directory should be `apps/backend`

@@ -39,6 +39,13 @@ export const teachersService = {
     syncClasses: (
         teacherId: string,
         academicYearId: string,
-        assignments: Array<{ classId: string; sectionIds?: string[]; subjectIds?: string[]; academicYearId?: string }>,
+        assignments: Array<{
+            classId: string
+            sectionIds?: string[]
+            subjectIds?: string[]
+            isClassTeacher?: boolean
+            isSubjectTeacher?: boolean
+            academicYearId?: string
+        }>,
     ) => api.patch<any>(`/teachers/${teacherId}/sync-classes`, { academicYearId, assignments }),
 }

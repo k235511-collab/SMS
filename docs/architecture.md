@@ -65,6 +65,14 @@ Requirements for any new `unscopedClient` usage:
 - dashboard and role-based application pages live under `apps/frontend/src/app/(dashboard)`
 - shared API and auth state live under `apps/frontend/src/lib` and `apps/frontend/src/context`
 
+## Teacher Assignment Model
+
+- `TeacherClassAssignment` is the source of truth for teacher-class-section-subject access.
+- Class-teacher responsibility is now section-wise: class-teacher rows are stored as `subjectId = null` and `sectionId` set.
+- Subject-teacher rows use `subjectId` with optional `sectionId` (`sectionId = null` means all sections of that class).
+- `Teacher.classTeacherOfId` remains as a backward-compatibility marker for older client flows, but authorization logic should rely on assignment rows.
+- Attendance read/write permissions for teachers now resolve class-teacher access using assignment rows and section scope.
+
 ## Known Structural Risks
 
 - `FinanceService` and `PlatformService` still hold multiple responsibilities

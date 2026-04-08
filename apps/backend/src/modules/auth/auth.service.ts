@@ -138,7 +138,11 @@ export class AuthService {
     })
 
     const teacherId = (user as any).teacher?.id || null
-    const classTeacherOfId = (user as any).teacher?.classTeacherOfId || null
+    const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(
+      teacherId,
+      user.schoolId,
+      (user as any).teacher?.classTeacherOfId || null,
+    )
 
     // Generate tokens for the school context found
     const tokens = this.generateTokens({
@@ -233,7 +237,11 @@ export class AuthService {
       }
 
       const teacherId = (user as any).teacher?.id || null
-      const classTeacherOfId = (user as any).teacher?.classTeacherOfId || null
+      const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(
+        teacherId,
+        user.schoolId,
+        (user as any).teacher?.classTeacherOfId || null,
+      )
 
       const tokens = this.generateTokens({
         sub: user.id,
@@ -473,6 +481,13 @@ export class AuthService {
       throw new UnauthorizedException('User does not belong to this school')
     }
 
+    const teacherId = (user as any).teacher?.id || null
+    const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(
+      teacherId,
+      schoolId,
+      (user as any).teacher?.classTeacherOfId || null,
+    )
+
     return {
       id: user.id,
       email: user.email,
@@ -490,8 +505,8 @@ export class AuthService {
       isPlatformAdmin: false,
       campusId: user.campusId || null,
       campusName: user.campus?.name || null,
-      teacherId: (user as any).teacher?.id || null,
-      classTeacherOfId: (user as any).teacher?.classTeacherOfId || null,
+      teacherId,
+      classTeacherOfId,
       mustChangePassword: (user as any).mustChangePassword ?? false,
     }
   }
@@ -578,6 +593,13 @@ export class AuthService {
       teacherId: (targetUser as any).teacher?.id || null,
     })
 
+    const teacherId = (targetUser as any).teacher?.id || null
+    const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(
+      teacherId,
+      targetUser.schoolId,
+      (targetUser as any).teacher?.classTeacherOfId || null,
+    )
+
     return {
       ...tokens,
       user: {
@@ -589,11 +611,38 @@ export class AuthService {
         schoolName: targetUser.school?.name,
         role: targetUser.role?.slug,
         avatar: targetUser.avatar,
-        teacherId: (targetUser as any).teacher?.id || null,
-        classTeacherOfId: (targetUser as any).teacher?.classTeacherOfId || null,
+        teacherId,
+        classTeacherOfId,
         mustChangePassword: (targetUser as any).mustChangePassword ?? false,
       },
     }
+  }
+
+  private async resolveLegacyClassTeacherOfId(
+    teacherId: string | null,
+    schoolId: string | undefined,
+    fallbackClassTeacherOfId: string | null,
+  ): Promise<string | null> {
+    if (fallbackClassTeacherOfId) {
+      return fallbackClassTeacherOfId
+    }
+
+    if (!teacherId || !schoolId) {
+      return null
+    }
+
+    const classTeacherRow = await this.prisma.unscopedClient.teacherClassAssignment.findFirst({
+      where: {
+        teacherId,
+        schoolId,
+        isActive: true,
+        subjectId: null,
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { classId: true },
+    })
+
+    return classTeacherRow?.classId ?? null
   }
 
   /**

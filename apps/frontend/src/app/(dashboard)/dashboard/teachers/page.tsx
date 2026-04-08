@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from 'react'
 import { ProtectedRoute, PermissionGate } from '@/components/auth'
 import { DataTable, type ColumnDef, SortableHeader } from '@/components/ui/data-table'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
@@ -18,7 +17,7 @@ import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import { useSession } from '@/context/session-context'
 import { CampusBadge } from '@/components/campus-badge'
-import { TeachingAssignmentsDialog, type SubjectOption, type TeachingAssignmentClass, type TeachingAssignmentSelection } from '@/components/teachers/teaching-assignments-dialog'
+import { TeachingAssignmentsDialog, type TeachingAssignmentClass, type TeachingAssignmentSelection } from '@/components/teachers/teaching-assignments-dialog'
 import useCampusRefetch from '@/hooks/useCampusRefetch'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -138,7 +137,6 @@ export default function TeachersPage() {
   const [assignTeacher, setAssignTeacher] = useState<Teacher | null>(null)
   const [availableClasses, setAvailableClasses] = useState<TeachingAssignmentClass[]>([])
   const [selectedMap, setSelectedMap] = useState<Record<string, TeachingAssignmentSelection>>({})
-  const [classTeacherClassId, setClassTeacherClassId] = useState<string | null>(null)
   const [assignSaving, setAssignSaving] = useState(false)
   const [assignLoading, setAssignLoading] = useState(true)
 
@@ -255,7 +253,6 @@ export default function TeachersPage() {
     setAssignSaving(false)
     setAvailableClasses([])
     setSelectedMap({})
-    setClassTeacherClassId(teacher.classTeacherOfId || null)
     setAssignLoading(true)
     setAssignTeacher(teacher)
     // Use setTimeout to ensure loading=true renders before opening dialog
@@ -266,13 +263,10 @@ export default function TeachersPage() {
       academicsService.getClasses(),
     ])
     // Build selected map from existing assignments
-    const ctId = teacher.classTeacherOfId || null
     const map: Record<string, TeachingAssignmentSelection> = {}
     if (assignRes.success && assignRes.data) {
       const assignments = Array.isArray(assignRes.data) ? assignRes.data : []
       for (const a of assignments) {
-        // Skip class-teacher broad rows — they're tracked by classTeacherClassId
-        if (!a.subjectId && a.classId === ctId) continue
         if (!map[a.classId]) {
           map[a.classId] = { sectionIds: new Set<string>(), subjectIds: new Set<string>(), isClassTeacher: false, isSubjectTeacher: false }
         }
@@ -280,15 +274,9 @@ export default function TeachersPage() {
         if (a.subjectId) {
           map[a.classId].subjectIds.add(a.subjectId)
           map[a.classId].isSubjectTeacher = true
+        } else {
+          map[a.classId].isClassTeacher = true
         }
-      }
-    }
-    // Mark class teacher class
-    if (ctId) {
-      if (!map[ctId]) {
-        map[ctId] = { sectionIds: new Set<string>(), subjectIds: new Set<string>(), isClassTeacher: true, isSubjectTeacher: false }
-      } else {
-        map[ctId] = { ...map[ctId], isClassTeacher: true }
       }
     }
     setSelectedMap(map)
@@ -317,10 +305,6 @@ export default function TeachersPage() {
   }
 
   const toggleClass = (classId: string) => {
-    // If removing the class-teacher class, clear classTeacherClassId
-    if (selectedMap[classId] !== undefined && classTeacherClassId === classId) {
-      setClassTeacherClassId(null)
-    }
     setSelectedMap(prev => {
       const next = { ...prev }
       if (next[classId] !== undefined) {
@@ -357,7 +341,12 @@ export default function TeachersPage() {
   }
 
   const toggleClassTeacher = (classId: string) => {
-    setClassTeacherClassId(prev => prev === classId ? null : classId)
+    setSelectedMap(prev => {
+      const next = { ...prev }
+      if (!next[classId]) return next
+      next[classId] = { ...next[classId], isClassTeacher: !next[classId].isClassTeacher }
+      return next
+    })
   }
 
   const toggleSubjectTeacher = (classId: string) => {
@@ -379,10 +368,14 @@ export default function TeachersPage() {
     const selectedEntries = Object.entries(selectedMap)
 
     // Validate: each class must have at least one role
-    for (const [classId, value] of selectedEntries) {
-      const isClassTeacher = classTeacherClassId === classId
-      if (!isClassTeacher && !value.isSubjectTeacher) {
+    for (const [, value] of selectedEntries) {
+      if (!value.isClassTeacher && !value.isSubjectTeacher) {
         toast.error('Each class must have at least one role assigned (Class Teacher or Subject Teacher)')
+        setAssignSaving(false)
+        return
+      }
+      if (value.isClassTeacher && value.sectionIds.size === 0) {
+        toast.error('Please select at least one section for each Class Teacher assignment')
         setAssignSaving(false)
         return
       }
@@ -394,22 +387,14 @@ export default function TeachersPage() {
     }
 
     try {
-      // Step 1: Update classTeacherOfId via PATCH
-      const patchRes = await api.patch(`/teachers/${assignTeacher.id}`, {
-        classTeacherOfId: classTeacherClassId || null,
-      })
-      if (!patchRes.success) {
-        toast.error(patchRes.message || 'Failed to update class teacher assignment')
-        setAssignSaving(false)
-        return
-      }
-
-      // Step 2: Sync only subject-teacher entries
-      const subjectEntries = selectedEntries.filter(([, value]) => value.isSubjectTeacher && value.subjectIds.size > 0)
-      const assignments = subjectEntries.map(([classId, value]) => ({
+      const assignments = selectedEntries
+        .filter(([, value]) => value.isClassTeacher || value.isSubjectTeacher)
+        .map(([classId, value]) => ({
         classId,
-        sectionIds: value.sectionIds.size > 0 ? Array.from(value.sectionIds) : [],
-        subjectIds: Array.from(value.subjectIds),
+        sectionIds: Array.from(value.sectionIds),
+        subjectIds: value.isSubjectTeacher ? Array.from(value.subjectIds) : [],
+        isClassTeacher: value.isClassTeacher,
+        isSubjectTeacher: value.isSubjectTeacher,
         academicYearId: selectedYear.id,
       }))
 
@@ -624,7 +609,6 @@ export default function TeachersPage() {
         academicYearName={selectedYear?.name}
         availableClasses={availableClasses}
         selectedMap={selectedMap}
-        classTeacherClassId={classTeacherClassId}
         saving={assignSaving}
         loading={assignLoading}
         onToggleClass={toggleClass}

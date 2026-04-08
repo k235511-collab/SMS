@@ -37,7 +37,6 @@ interface TeachingAssignmentsDialogProps {
   academicYearName?: string
   availableClasses: TeachingAssignmentClass[]
   selectedMap: Record<string, TeachingAssignmentSelection>
-  classTeacherClassId: string | null
   saving: boolean
   loading: boolean
   onToggleClass: (classId: string) => void
@@ -84,7 +83,6 @@ export function TeachingAssignmentsDialog({
   academicYearName,
   availableClasses,
   selectedMap,
-  classTeacherClassId,
   saving,
   loading,
   onToggleClass,
@@ -206,7 +204,7 @@ export function TeachingAssignmentsDialog({
                               type="button"
                               onClick={() => onToggleClassTeacher(item.id)}
                               className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-all ${
-                                classTeacherClassId === item.id
+                                selection?.isClassTeacher
                                   ? 'border-primary-300 bg-primary-50 text-primary-700 shadow-sm'
                                   : 'border-border bg-muted/30 text-muted-foreground hover:border-primary-200 hover:bg-primary-50/50'
                               }`}
@@ -229,14 +227,14 @@ export function TeachingAssignmentsDialog({
                           </div>
 
                           {/* Class Teacher info strip */}
-                          {classTeacherClassId === item.id && (
+                          {selection?.isClassTeacher && (
                             <div className="mb-3 flex items-center gap-2 rounded-lg bg-primary-50/80 px-3 py-2 text-[11px] text-primary-700">
                               <ClipboardCheck className="h-3.5 w-3.5 shrink-0" />
                               <span>Full access: attendance, report cards, all subject marks &amp; results</span>
                             </div>
                           )}
 
-                          <div className={`grid grid-cols-2 gap-3 ${!selection?.isSubjectTeacher ? 'pointer-events-none opacity-40' : ''}`}>
+                          <div className="grid grid-cols-2 gap-3">
                             {/* Sections */}
                             <div className="space-y-1.5">
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Sections</span>
@@ -264,7 +262,7 @@ export function TeachingAssignmentsDialog({
                             </div>
 
                             {/* Subjects */}
-                            <div className="space-y-1.5">
+                            <div className={`space-y-1.5 ${!selection?.isSubjectTeacher ? 'pointer-events-none opacity-40' : ''}`}>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Subjects</span>
                               <MultiSelectDropdown
                                 label={`${item.name} subjects`}

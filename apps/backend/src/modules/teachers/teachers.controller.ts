@@ -11,6 +11,7 @@ import {
   HttpCode,
   HttpStatus,
   UnauthorizedException,
+  BadRequestException,
 } from '@nestjs/common'
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger'
 import { TeachersService } from './teachers.service'
@@ -150,12 +151,22 @@ export class TeachersController {
     @TenantId() schoolId: string,
     @Body() body: {
       academicYearId?: string
-      assignments?: Array<{ classId: string; sectionIds?: string[]; subjectIds?: string[]; academicYearId?: string }>
+      assignments?: Array<{
+        classId: string
+        sectionIds?: string[]
+        subjectIds?: string[]
+        isClassTeacher?: boolean
+        isSubjectTeacher?: boolean
+        academicYearId?: string
+      }>
       classIds?: string[]
     },
   ) {
-    // Support both new { assignments } and legacy { classIds } format
-    const assignments = body.assignments ?? (body.classIds || []).map((cid) => ({ classId: cid, subjectIds: [] }))
+    if (!body.assignments || body.assignments.length === 0) {
+      throw new BadRequestException('assignments payload is required for sync-classes')
+    }
+
+    const assignments = body.assignments
     return this.teachersService.syncClasses(id, schoolId, body.academicYearId, assignments)
   }
 }

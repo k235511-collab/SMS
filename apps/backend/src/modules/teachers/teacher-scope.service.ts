@@ -13,8 +13,12 @@ export interface TeacherScope {
   classIds: string[]
   sectionIds: string[]
   subjectIds: string[]
-  /** The classId this teacher is "class teacher of" — grants read access to all subjects */
+  /** Legacy single-class marker used by existing clients/navigation. */
   classTeacherOfId: string | null
+  /** All classes where teacher has class-teacher role rows (subjectId=null). */
+  classTeacherClassIds: string[]
+  /** All sections where teacher has class-teacher authority. */
+  classTeacherSectionIds: string[]
 }
 
 interface ActiveTeacherAssignment {
@@ -73,29 +77,7 @@ export class TeacherScopeService {
     }
   }
 
-  async getExamAccessConditions(
-    teacherId: string,
-    schoolId: string,
-    academicYearId?: string,
-  ): Promise<Array<Record<string, unknown>>> {
-    const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId, academicYearId)
-    const conditions: Array<Record<string, unknown>> = []
-
-    if (classTeacherOfId) {
-      conditions.push({ classId: classTeacherOfId })
-    }
-
-    for (const assignment of assignments) {
-      const condition: Record<string, unknown> = { classId: assignment.classId }
-      if (assignment.sectionId) {
-        condition.sectionId = assignment.sectionId
-      }
-      if (assignment.subjectId) {
-        condition.subjectId = assignment.subjectId
-      }
-      conditions.push(condition)
-    }
-
+  private dedupeConditions(conditions: Array<Record<string, unknown>>) {
     const seen = new Set<string>()
     return conditions.filter((condition) => {
       const key = JSON.stringify(condition)
@@ -105,6 +87,56 @@ export class TeacherScopeService {
       seen.add(key)
       return true
     })
+  }
+
+  private async expandSectionsForClasses(classIds: string[], schoolId: string): Promise<string[]> {
+    if (classIds.length === 0) {
+      return []
+    }
+
+    const sections = await this.prisma.section.findMany({
+      where: { classId: { in: classIds }, schoolId },
+      select: { id: true },
+    })
+
+    return sections.map((section) => section.id)
+  }
+
+  async getExamAccessConditions(
+    teacherId: string,
+    schoolId: string,
+    academicYearId?: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId, academicYearId)
+    const conditions: Array<Record<string, unknown>> = []
+
+    const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null)
+    const subjectAssignments = assignments.filter((assignment) => assignment.subjectId !== null)
+
+    if (classTeacherAssignments.length === 0 && classTeacherOfId) {
+      conditions.push({ classId: classTeacherOfId })
+    }
+
+    for (const assignment of classTeacherAssignments) {
+      const condition: Record<string, unknown> = { classId: assignment.classId }
+      if (assignment.sectionId) {
+        condition.sectionId = assignment.sectionId
+      }
+      conditions.push(condition)
+    }
+
+    for (const assignment of subjectAssignments) {
+      const condition: Record<string, unknown> = {
+        classId: assignment.classId,
+        subjectId: assignment.subjectId,
+      }
+      if (assignment.sectionId) {
+        condition.sectionId = assignment.sectionId
+      }
+      conditions.push(condition)
+    }
+
+    return this.dedupeConditions(conditions)
   }
 
   async getAssignmentAccessConditions(
@@ -119,27 +151,27 @@ export class TeacherScopeService {
     )
     const conditions: Array<Record<string, unknown>> = []
 
-    if (classTeacherOfId) {
+    const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null)
+    const subjectAssignments = assignments.filter((assignment) => assignment.subjectId !== null)
+
+    if (classTeacherAssignments.length === 0 && classTeacherOfId) {
       conditions.push({ classId: classTeacherOfId })
     }
 
-    for (const assignment of assignments) {
+    for (const assignment of classTeacherAssignments) {
       const condition: Record<string, unknown> = { classId: assignment.classId }
-      if (assignment.subjectId) {
-        condition.subjectId = assignment.subjectId
+      conditions.push(condition)
+    }
+
+    for (const assignment of subjectAssignments) {
+      const condition: Record<string, unknown> = {
+        classId: assignment.classId,
+        subjectId: assignment.subjectId,
       }
       conditions.push(condition)
     }
 
-    const seen = new Set<string>()
-    return conditions.filter((condition) => {
-      const key = JSON.stringify(condition)
-      if (seen.has(key)) {
-        return false
-      }
-      seen.add(key)
-      return true
-    })
+    return this.dedupeConditions(conditions)
   }
 
   /**
@@ -169,34 +201,68 @@ export class TeacherScopeService {
       ),
     ]
 
-    // Class teacher's class is always included in classIds for read access
+    // Keep legacy single class-teacher class visible in class scope.
     if (classTeacherOfId && !classIds.includes(classTeacherOfId)) {
       classIds.push(classTeacherOfId)
     }
 
-    // ── Class-only assignment edge case ──────────────────────────
-    // If teacher has a class assignment without a specific section,
-    // expand to include ALL sections of that class.
+    // If teacher has class-only rows (sectionId=null), expand to every section.
     const classOnlyIds = assignments
       .filter((a) => a.sectionId === null)
       .map((a) => a.classId)
-    // Also include classTeacherOfId as a "class-only" since they manage the whole class
     if (classTeacherOfId) classOnlyIds.push(classTeacherOfId)
     const uniqueClassOnlyIds = [...new Set(classOnlyIds)]
 
     let sectionIds = [...explicitSectionIds]
 
     if (uniqueClassOnlyIds.length > 0) {
-      const expandedSections = await this.prisma.section.findMany({
-        where: { classId: { in: uniqueClassOnlyIds }, schoolId },
-        select: { id: true },
-      })
-      for (const s of expandedSections) {
-        if (!sectionIds.includes(s.id)) sectionIds.push(s.id)
+      const expandedSections = await this.expandSectionsForClasses(uniqueClassOnlyIds, schoolId)
+      for (const sectionId of expandedSections) {
+        if (!sectionIds.includes(sectionId)) sectionIds.push(sectionId)
       }
     }
 
-    return { classIds, sectionIds, subjectIds, classTeacherOfId }
+    const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null)
+    const classTeacherClassIds = [
+      ...new Set([
+        ...classTeacherAssignments.map((assignment) => assignment.classId),
+        ...(classTeacherOfId ? [classTeacherOfId] : []),
+      ]),
+    ]
+
+    const explicitClassTeacherSectionIds = [
+      ...new Set(
+        classTeacherAssignments
+          .map((assignment) => assignment.sectionId)
+          .filter((id): id is string => id !== null),
+      ),
+    ]
+
+    const classTeacherBroadClassIds = [
+      ...new Set([
+        ...classTeacherAssignments
+          .filter((assignment) => assignment.sectionId === null)
+          .map((assignment) => assignment.classId),
+        ...(classTeacherOfId ? [classTeacherOfId] : []),
+      ]),
+    ]
+
+    let classTeacherSectionIds = [...explicitClassTeacherSectionIds]
+    if (classTeacherBroadClassIds.length > 0) {
+      const expandedClassTeacherSections = await this.expandSectionsForClasses(classTeacherBroadClassIds, schoolId)
+      for (const sectionId of expandedClassTeacherSections) {
+        if (!classTeacherSectionIds.includes(sectionId)) classTeacherSectionIds.push(sectionId)
+      }
+    }
+
+    return {
+      classIds,
+      sectionIds,
+      subjectIds,
+      classTeacherOfId,
+      classTeacherClassIds,
+      classTeacherSectionIds,
+    }
   }
 
   /**
@@ -225,9 +291,31 @@ export class TeacherScopeService {
    * Validate that a teacher is the class teacher for the given class.
    * Used to restrict attendance marking to class teachers only.
    */
-  async validateClassTeacherAccess(teacherId: string, schoolId: string, classId: string): Promise<void> {
-    const scope = await this.getScope(teacherId, schoolId)
-    if (!scope.classTeacherOfId || scope.classTeacherOfId !== classId) {
+  async validateClassTeacherAccess(
+    teacherId: string,
+    schoolId: string,
+    classId: string,
+    sectionId?: string,
+  ): Promise<void> {
+    const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId)
+    const classTeacherAssignments = assignments.filter(
+      (assignment) => assignment.subjectId === null && assignment.classId === classId,
+    )
+
+    const hasLegacyClassTeacherClass = classTeacherOfId === classId
+    if (sectionId) {
+      const hasSectionClassTeacherAccess = classTeacherAssignments.some(
+        (assignment) => assignment.sectionId === sectionId || assignment.sectionId === null,
+      )
+
+      if (!hasSectionClassTeacherAccess && !hasLegacyClassTeacherClass) {
+        throw new ForbiddenException('Only class teachers can mark attendance for this class')
+      }
+      return
+    }
+
+    const hasClassTeacherAccess = classTeacherAssignments.length > 0
+    if (!hasClassTeacherAccess && !hasLegacyClassTeacherClass) {
       throw new ForbiddenException('Only class teachers can mark attendance for this class')
     }
   }
@@ -257,8 +345,20 @@ export class TeacherScopeService {
       opts.academicYearId,
     )
 
-    const isClassTeacher = classTeacherOfId && opts.classId && classTeacherOfId === opts.classId
-    if (isClassTeacher) {
+    const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null)
+    const hasClassTeacherAccess = classTeacherAssignments.some((assignment) => {
+      if (opts.classId && assignment.classId !== opts.classId) {
+        return false
+      }
+
+      if (opts.sectionId && assignment.sectionId && assignment.sectionId !== opts.sectionId) {
+        return false
+      }
+
+      return true
+    })
+
+    if (hasClassTeacherAccess || (classTeacherOfId && opts.classId && classTeacherOfId === opts.classId)) {
       return
     }
 
@@ -271,8 +371,10 @@ export class TeacherScopeService {
         return false
       }
 
-      if (opts.subjectId && assignment.subjectId && assignment.subjectId !== opts.subjectId) {
-        return false
+      if (opts.subjectId) {
+        if (!assignment.subjectId || assignment.subjectId !== opts.subjectId) {
+          return false
+        }
       }
 
       return true

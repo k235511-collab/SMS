@@ -30,8 +30,12 @@ export class AttendanceService {
       throw new NotFoundException(`Section with ID "${sectionId}" not found`)
     }
 
-    await this.teacherScopeService.validateClassTeacherAccess(teacherId, schoolId, section.classId)
-    await this.teacherScopeService.validateSectionAccess(teacherId, schoolId, sectionId)
+    await this.teacherScopeService.validateClassTeacherAccess(
+      teacherId,
+      schoolId,
+      section.classId,
+      sectionId,
+    )
 
     return section
   }
@@ -42,17 +46,30 @@ export class AttendanceService {
       if (!dto.sectionId) {
         throw new ForbiddenException('Teachers must specify a sectionId when marking attendance')
       }
-      const scope = await this.getTeacherScope(teacherId, schoolId)
       // Must be class teacher of the target class
       if (!dto.classId) {
         throw new ForbiddenException('Teachers must specify a classId when marking attendance')
       }
-      if (!scope.classTeacherOfId || scope.classTeacherOfId !== dto.classId) {
-        throw new ForbiddenException('Only class teachers can mark attendance')
+
+      const section = await this.prisma.section.findFirst({
+        where: { id: dto.sectionId, schoolId },
+        select: { id: true, classId: true },
+      })
+
+      if (!section) {
+        throw new NotFoundException(`Section with ID "${dto.sectionId}" not found`)
       }
-      if (!scope.sectionIds.includes(dto.sectionId)) {
-        throw new ForbiddenException('You are not assigned to this section')
+
+      if (section.classId !== dto.classId) {
+        throw new ForbiddenException('Selected class does not match the section')
       }
+
+      await this.teacherScopeService.validateClassTeacherAccess(
+        teacherId,
+        schoolId,
+        dto.classId,
+        dto.sectionId,
+      )
     }
     const results = await this.prisma.$transaction(
       dto.records.map((record) => {
@@ -99,15 +116,7 @@ export class AttendanceService {
     // Teacher scope: only show attendance for assigned sections/classes
     if (teacherId) {
       const scope = await this.getTeacherScope(teacherId, schoolId)
-      if (!scope.classTeacherOfId) {
-        return new PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20)
-      }
-
-      const classTeacherSections = await this.prisma.section.findMany({
-        where: { schoolId, classId: scope.classTeacherOfId },
-        select: { id: true },
-      })
-      const allowedSectionIds = classTeacherSections.map((section) => section.id)
+      const allowedSectionIds = scope.classTeacherSectionIds
 
       if (allowedSectionIds.length === 0) {
         return new PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20)
@@ -166,7 +175,7 @@ export class AttendanceService {
     // Teacher scope: can only view students in their assigned sections/classes
     if (teacherId) {
       const scope = await this.getTeacherScope(teacherId, schoolId)
-      if (!scope.classTeacherOfId || student.classId !== scope.classTeacherOfId) {
+      if (!student.sectionId || !scope.classTeacherSectionIds.includes(student.sectionId)) {
         throw new ForbiddenException('Only the class teacher can view attendance for this student')
       }
     }

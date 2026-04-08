@@ -143576,8 +143576,7 @@ let AttendanceService = class AttendanceService {
         if (!section) {
             throw new common_1.NotFoundException(`Section with ID "${sectionId}" not found`);
         }
-        await this.teacherScopeService.validateClassTeacherAccess(teacherId, schoolId, section.classId);
-        await this.teacherScopeService.validateSectionAccess(teacherId, schoolId, sectionId);
+        await this.teacherScopeService.validateClassTeacherAccess(teacherId, schoolId, section.classId, sectionId);
         return section;
     }
     async markAttendance(schoolId, dto, teacherId) {
@@ -143586,17 +143585,21 @@ let AttendanceService = class AttendanceService {
             if (!dto.sectionId) {
                 throw new common_1.ForbiddenException('Teachers must specify a sectionId when marking attendance');
             }
-            const scope = await this.getTeacherScope(teacherId, schoolId);
             // Must be class teacher of the target class
             if (!dto.classId) {
                 throw new common_1.ForbiddenException('Teachers must specify a classId when marking attendance');
             }
-            if (!scope.classTeacherOfId || scope.classTeacherOfId !== dto.classId) {
-                throw new common_1.ForbiddenException('Only class teachers can mark attendance');
+            const section = await this.prisma.section.findFirst({
+                where: { id: dto.sectionId, schoolId },
+                select: { id: true, classId: true },
+            });
+            if (!section) {
+                throw new common_1.NotFoundException(`Section with ID "${dto.sectionId}" not found`);
             }
-            if (!scope.sectionIds.includes(dto.sectionId)) {
-                throw new common_1.ForbiddenException('You are not assigned to this section');
+            if (section.classId !== dto.classId) {
+                throw new common_1.ForbiddenException('Selected class does not match the section');
             }
+            await this.teacherScopeService.validateClassTeacherAccess(teacherId, schoolId, dto.classId, dto.sectionId);
         }
         const results = await this.prisma.$transaction(dto.records.map((record) => {
             if (record.status === 'UNMARKED') {
@@ -143639,14 +143642,7 @@ let AttendanceService = class AttendanceService {
         // Teacher scope: only show attendance for assigned sections/classes
         if (teacherId) {
             const scope = await this.getTeacherScope(teacherId, schoolId);
-            if (!scope.classTeacherOfId) {
-                return new dto_1.PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20);
-            }
-            const classTeacherSections = await this.prisma.section.findMany({
-                where: { schoolId, classId: scope.classTeacherOfId },
-                select: { id: true },
-            });
-            const allowedSectionIds = classTeacherSections.map((section) => section.id);
+            const allowedSectionIds = scope.classTeacherSectionIds;
             if (allowedSectionIds.length === 0) {
                 return new dto_1.PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20);
             }
@@ -143699,7 +143695,7 @@ let AttendanceService = class AttendanceService {
         // Teacher scope: can only view students in their assigned sections/classes
         if (teacherId) {
             const scope = await this.getTeacherScope(teacherId, schoolId);
-            if (!scope.classTeacherOfId || student.classId !== scope.classTeacherOfId) {
+            if (!student.sectionId || !scope.classTeacherSectionIds.includes(student.sectionId)) {
                 throw new common_1.ForbiddenException('Only the class teacher can view attendance for this student');
             }
         }
@@ -144529,7 +144525,7 @@ let AuthService = class AuthService {
             data: { lastLoginAt: new Date() },
         });
         const teacherId = user.teacher?.id || null;
-        const classTeacherOfId = user.teacher?.classTeacherOfId || null;
+        const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(teacherId, user.schoolId, user.teacher?.classTeacherOfId || null);
         // Generate tokens for the school context found
         const tokens = this.generateTokens({
             sub: user.id,
@@ -144612,7 +144608,7 @@ let AuthService = class AuthService {
                 });
             }
             const teacherId = user.teacher?.id || null;
-            const classTeacherOfId = user.teacher?.classTeacherOfId || null;
+            const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(teacherId, user.schoolId, user.teacher?.classTeacherOfId || null);
             const tokens = this.generateTokens({
                 sub: user.id,
                 schoolId: user.schoolId,
@@ -144814,6 +144810,8 @@ let AuthService = class AuthService {
         if (user.schoolId !== schoolId) {
             throw new common_1.UnauthorizedException('User does not belong to this school');
         }
+        const teacherId = user.teacher?.id || null;
+        const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(teacherId, schoolId, user.teacher?.classTeacherOfId || null);
         return {
             id: user.id,
             email: user.email,
@@ -144831,8 +144829,8 @@ let AuthService = class AuthService {
             isPlatformAdmin: false,
             campusId: user.campusId || null,
             campusName: user.campus?.name || null,
-            teacherId: user.teacher?.id || null,
-            classTeacherOfId: user.teacher?.classTeacherOfId || null,
+            teacherId,
+            classTeacherOfId,
             mustChangePassword: user.mustChangePassword ?? false,
         };
     }
@@ -144913,6 +144911,8 @@ let AuthService = class AuthService {
             role: targetUser.role?.slug,
             teacherId: targetUser.teacher?.id || null,
         });
+        const teacherId = targetUser.teacher?.id || null;
+        const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(teacherId, targetUser.schoolId, targetUser.teacher?.classTeacherOfId || null);
         return {
             ...tokens,
             user: {
@@ -144924,11 +144924,30 @@ let AuthService = class AuthService {
                 schoolName: targetUser.school?.name,
                 role: targetUser.role?.slug,
                 avatar: targetUser.avatar,
-                teacherId: targetUser.teacher?.id || null,
-                classTeacherOfId: targetUser.teacher?.classTeacherOfId || null,
+                teacherId,
+                classTeacherOfId,
                 mustChangePassword: targetUser.mustChangePassword ?? false,
             },
         };
+    }
+    async resolveLegacyClassTeacherOfId(teacherId, schoolId, fallbackClassTeacherOfId) {
+        if (fallbackClassTeacherOfId) {
+            return fallbackClassTeacherOfId;
+        }
+        if (!teacherId || !schoolId) {
+            return null;
+        }
+        const classTeacherRow = await this.prisma.unscopedClient.teacherClassAssignment.findFirst({
+            where: {
+                teacherId,
+                schoolId,
+                isActive: true,
+                subjectId: null,
+            },
+            orderBy: { createdAt: 'asc' },
+            select: { classId: true },
+        });
+        return classTeacherRow?.classId ?? null;
     }
     /**
      * Get all permission slugs for a user's role.
@@ -159195,22 +159214,7 @@ let TeacherScopeService = class TeacherScopeService {
             classTeacherOfId: teacher?.classTeacherOfId ?? null,
         };
     }
-    async getExamAccessConditions(teacherId, schoolId, academicYearId) {
-        const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId, academicYearId);
-        const conditions = [];
-        if (classTeacherOfId) {
-            conditions.push({ classId: classTeacherOfId });
-        }
-        for (const assignment of assignments) {
-            const condition = { classId: assignment.classId };
-            if (assignment.sectionId) {
-                condition.sectionId = assignment.sectionId;
-            }
-            if (assignment.subjectId) {
-                condition.subjectId = assignment.subjectId;
-            }
-            conditions.push(condition);
-        }
+    dedupeConditions(conditions) {
         const seen = new Set();
         return conditions.filter((condition) => {
             const key = JSON.stringify(condition);
@@ -159221,28 +159225,63 @@ let TeacherScopeService = class TeacherScopeService {
             return true;
         });
     }
-    async getAssignmentAccessConditions(teacherId, schoolId, academicYearId) {
+    async expandSectionsForClasses(classIds, schoolId) {
+        if (classIds.length === 0) {
+            return [];
+        }
+        const sections = await this.prisma.section.findMany({
+            where: { classId: { in: classIds }, schoolId },
+            select: { id: true },
+        });
+        return sections.map((section) => section.id);
+    }
+    async getExamAccessConditions(teacherId, schoolId, academicYearId) {
         const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId, academicYearId);
         const conditions = [];
-        if (classTeacherOfId) {
+        const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null);
+        const subjectAssignments = assignments.filter((assignment) => assignment.subjectId !== null);
+        if (classTeacherAssignments.length === 0 && classTeacherOfId) {
             conditions.push({ classId: classTeacherOfId });
         }
-        for (const assignment of assignments) {
+        for (const assignment of classTeacherAssignments) {
             const condition = { classId: assignment.classId };
-            if (assignment.subjectId) {
-                condition.subjectId = assignment.subjectId;
+            if (assignment.sectionId) {
+                condition.sectionId = assignment.sectionId;
             }
             conditions.push(condition);
         }
-        const seen = new Set();
-        return conditions.filter((condition) => {
-            const key = JSON.stringify(condition);
-            if (seen.has(key)) {
-                return false;
+        for (const assignment of subjectAssignments) {
+            const condition = {
+                classId: assignment.classId,
+                subjectId: assignment.subjectId,
+            };
+            if (assignment.sectionId) {
+                condition.sectionId = assignment.sectionId;
             }
-            seen.add(key);
-            return true;
-        });
+            conditions.push(condition);
+        }
+        return this.dedupeConditions(conditions);
+    }
+    async getAssignmentAccessConditions(teacherId, schoolId, academicYearId) {
+        const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId, academicYearId);
+        const conditions = [];
+        const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null);
+        const subjectAssignments = assignments.filter((assignment) => assignment.subjectId !== null);
+        if (classTeacherAssignments.length === 0 && classTeacherOfId) {
+            conditions.push({ classId: classTeacherOfId });
+        }
+        for (const assignment of classTeacherAssignments) {
+            const condition = { classId: assignment.classId };
+            conditions.push(condition);
+        }
+        for (const assignment of subjectAssignments) {
+            const condition = {
+                classId: assignment.classId,
+                subjectId: assignment.subjectId,
+            };
+            conditions.push(condition);
+        }
+        return this.dedupeConditions(conditions);
     }
     /**
      * Resolve all classIds, sectionIds, and subjectIds assigned to a teacher.
@@ -159265,32 +159304,61 @@ let TeacherScopeService = class TeacherScopeService {
                 .map((a) => a.subjectId)
                 .filter((id) => id !== null)),
         ];
-        // Class teacher's class is always included in classIds for read access
+        // Keep legacy single class-teacher class visible in class scope.
         if (classTeacherOfId && !classIds.includes(classTeacherOfId)) {
             classIds.push(classTeacherOfId);
         }
-        // ── Class-only assignment edge case ──────────────────────────
-        // If teacher has a class assignment without a specific section,
-        // expand to include ALL sections of that class.
+        // If teacher has class-only rows (sectionId=null), expand to every section.
         const classOnlyIds = assignments
             .filter((a) => a.sectionId === null)
             .map((a) => a.classId);
-        // Also include classTeacherOfId as a "class-only" since they manage the whole class
         if (classTeacherOfId)
             classOnlyIds.push(classTeacherOfId);
         const uniqueClassOnlyIds = [...new Set(classOnlyIds)];
         let sectionIds = [...explicitSectionIds];
         if (uniqueClassOnlyIds.length > 0) {
-            const expandedSections = await this.prisma.section.findMany({
-                where: { classId: { in: uniqueClassOnlyIds }, schoolId },
-                select: { id: true },
-            });
-            for (const s of expandedSections) {
-                if (!sectionIds.includes(s.id))
-                    sectionIds.push(s.id);
+            const expandedSections = await this.expandSectionsForClasses(uniqueClassOnlyIds, schoolId);
+            for (const sectionId of expandedSections) {
+                if (!sectionIds.includes(sectionId))
+                    sectionIds.push(sectionId);
             }
         }
-        return { classIds, sectionIds, subjectIds, classTeacherOfId };
+        const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null);
+        const classTeacherClassIds = [
+            ...new Set([
+                ...classTeacherAssignments.map((assignment) => assignment.classId),
+                ...(classTeacherOfId ? [classTeacherOfId] : []),
+            ]),
+        ];
+        const explicitClassTeacherSectionIds = [
+            ...new Set(classTeacherAssignments
+                .map((assignment) => assignment.sectionId)
+                .filter((id) => id !== null)),
+        ];
+        const classTeacherBroadClassIds = [
+            ...new Set([
+                ...classTeacherAssignments
+                    .filter((assignment) => assignment.sectionId === null)
+                    .map((assignment) => assignment.classId),
+                ...(classTeacherOfId ? [classTeacherOfId] : []),
+            ]),
+        ];
+        let classTeacherSectionIds = [...explicitClassTeacherSectionIds];
+        if (classTeacherBroadClassIds.length > 0) {
+            const expandedClassTeacherSections = await this.expandSectionsForClasses(classTeacherBroadClassIds, schoolId);
+            for (const sectionId of expandedClassTeacherSections) {
+                if (!classTeacherSectionIds.includes(sectionId))
+                    classTeacherSectionIds.push(sectionId);
+            }
+        }
+        return {
+            classIds,
+            sectionIds,
+            subjectIds,
+            classTeacherOfId,
+            classTeacherClassIds,
+            classTeacherSectionIds,
+        };
     }
     /**
      * Validate that a teacher is assigned to the given class.
@@ -159316,9 +159384,19 @@ let TeacherScopeService = class TeacherScopeService {
      * Validate that a teacher is the class teacher for the given class.
      * Used to restrict attendance marking to class teachers only.
      */
-    async validateClassTeacherAccess(teacherId, schoolId, classId) {
-        const scope = await this.getScope(teacherId, schoolId);
-        if (!scope.classTeacherOfId || scope.classTeacherOfId !== classId) {
+    async validateClassTeacherAccess(teacherId, schoolId, classId, sectionId) {
+        const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId);
+        const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null && assignment.classId === classId);
+        const hasLegacyClassTeacherClass = classTeacherOfId === classId;
+        if (sectionId) {
+            const hasSectionClassTeacherAccess = classTeacherAssignments.some((assignment) => assignment.sectionId === sectionId || assignment.sectionId === null);
+            if (!hasSectionClassTeacherAccess && !hasLegacyClassTeacherClass) {
+                throw new common_1.ForbiddenException('Only class teachers can mark attendance for this class');
+            }
+            return;
+        }
+        const hasClassTeacherAccess = classTeacherAssignments.length > 0;
+        if (!hasClassTeacherAccess && !hasLegacyClassTeacherClass) {
             throw new common_1.ForbiddenException('Only class teachers can mark attendance for this class');
         }
     }
@@ -159337,8 +159415,17 @@ let TeacherScopeService = class TeacherScopeService {
      */
     async validateFullAccess(teacherId, schoolId, opts) {
         const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId, opts.academicYearId);
-        const isClassTeacher = classTeacherOfId && opts.classId && classTeacherOfId === opts.classId;
-        if (isClassTeacher) {
+        const classTeacherAssignments = assignments.filter((assignment) => assignment.subjectId === null);
+        const hasClassTeacherAccess = classTeacherAssignments.some((assignment) => {
+            if (opts.classId && assignment.classId !== opts.classId) {
+                return false;
+            }
+            if (opts.sectionId && assignment.sectionId && assignment.sectionId !== opts.sectionId) {
+                return false;
+            }
+            return true;
+        });
+        if (hasClassTeacherAccess || (classTeacherOfId && opts.classId && classTeacherOfId === opts.classId)) {
             return;
         }
         const hasMatch = assignments.some((assignment) => {
@@ -159348,8 +159435,10 @@ let TeacherScopeService = class TeacherScopeService {
             if (opts.sectionId && assignment.sectionId && assignment.sectionId !== opts.sectionId) {
                 return false;
             }
-            if (opts.subjectId && assignment.subjectId && assignment.subjectId !== opts.subjectId) {
-                return false;
+            if (opts.subjectId) {
+                if (!assignment.subjectId || assignment.subjectId !== opts.subjectId) {
+                    return false;
+                }
             }
             return true;
         });
@@ -159452,8 +159541,10 @@ let TeachersController = class TeachersController {
         return this.teachersService.removeClassAssignment(assignmentId, id, schoolId);
     }
     syncClasses(id, schoolId, body) {
-        // Support both new { assignments } and legacy { classIds } format
-        const assignments = body.assignments ?? (body.classIds || []).map((cid) => ({ classId: cid, subjectIds: [] }));
+        if (!body.assignments || body.assignments.length === 0) {
+            throw new common_1.BadRequestException('assignments payload is required for sync-classes');
+        }
+        const assignments = body.assignments;
         return this.teachersService.syncClasses(id, schoolId, body.academicYearId, assignments);
     }
 };
@@ -160188,47 +160279,75 @@ let TeachersService = class TeachersService {
         });
     }
     /**
-     * Sync a teacher's class & section assignments.
-     * Accepts an array of { classId, sectionIds?: string[] }.
-     * - If sectionIds is empty/undefined → class-level assignment (sectionId = null).
-     * - If sectionIds has entries → one assignment per section, no class-level row.
+     * Sync a teacher's teaching assignments for an academic year.
      *
-     * Strategy: deactivate ALL existing non-subject assignments first, then
-     * reactivate or create each desired pair. This avoids orphan/duplicate issues
-     * caused by PostgreSQL treating NULLs as distinct in unique constraints.
+     * Role rules:
+     * - Class Teacher rows are stored as subjectId=null and sectionId is required.
+     * - Subject Teacher rows are stored with subjectId set and sectionId optional.
+     *   If sectionIds is empty for subject-teacher mode, the row applies to all
+     *   sections in the class (sectionId=null).
      */
     async syncClasses(teacherId, schoolId, academicYearId, assignments) {
         await this.findById(teacherId, schoolId);
-        const teacher = await this.prisma.teacher.findUnique({
-            where: { id: teacherId },
-            select: { classTeacherOfId: true },
-        });
-        // Build desired set of exact teaching rows
+        // Build desired set of exact teaching rows.
         const desired = [];
         for (const a of assignments) {
             const effectiveYearId = a.academicYearId ?? academicYearId ?? null;
-            const sectionIds = a.sectionIds && a.sectionIds.length > 0 ? a.sectionIds : [null];
+            const sectionIds = [...new Set((a.sectionIds || []).filter(Boolean))];
             const subjectIds = [...new Set((a.subjectIds || []).filter(Boolean))];
-            if (subjectIds.length === 0) {
-                throw new common_1.BadRequestException('Each teaching assignment must include at least one subject');
+            const isClassTeacher = a.isClassTeacher === true;
+            const isSubjectTeacher = a.isSubjectTeacher === true || (a.isSubjectTeacher !== false && subjectIds.length > 0);
+            if (!isClassTeacher && !isSubjectTeacher) {
+                throw new common_1.BadRequestException('Each assignment must include at least one role');
             }
-            for (const subjectId of subjectIds) {
+            if (isClassTeacher && sectionIds.length === 0) {
+                throw new common_1.BadRequestException('Please select at least one section for each class-teacher assignment');
+            }
+            if (isSubjectTeacher && subjectIds.length === 0) {
+                throw new common_1.BadRequestException('Each subject-teacher assignment must include at least one subject');
+            }
+            if (isClassTeacher) {
                 for (const sectionId of sectionIds) {
                     desired.push({
                         classId: a.classId,
                         sectionId,
-                        subjectId,
+                        subjectId: null,
                         academicYearId: effectiveYearId,
                     });
                 }
             }
+            if (isSubjectTeacher) {
+                const subjectSectionIds = sectionIds.length > 0 ? sectionIds : [null];
+                for (const subjectId of subjectIds) {
+                    for (const sectionId of subjectSectionIds) {
+                        desired.push({
+                            classId: a.classId,
+                            sectionId,
+                            subjectId,
+                            academicYearId: effectiveYearId,
+                        });
+                    }
+                }
+            }
+        }
+        // Deduplicate desired rows generated from toggles.
+        const desiredRows = [];
+        const desiredKeys = new Set();
+        for (const row of desired) {
+            const key = `${row.classId}:${row.sectionId ?? 'null'}:${row.subjectId ?? 'null'}:${row.academicYearId ?? 'null'}`;
+            if (desiredKeys.has(key))
+                continue;
+            desiredKeys.add(key);
+            desiredRows.push(row);
         }
         // Validate referenced classes, sections, and subjects
-        const classIds = [...new Set(desired.map((d) => d.classId))];
+        const classIds = [...new Set(desiredRows.map((d) => d.classId))];
         const sectionIds = [
-            ...new Set(desired.map((d) => d.sectionId).filter((id) => id !== null)),
+            ...new Set(desiredRows.map((d) => d.sectionId).filter((id) => id !== null)),
         ];
-        const subjectIds = [...new Set(desired.map((d) => d.subjectId))];
+        const subjectIds = [
+            ...new Set(desiredRows.map((d) => d.subjectId).filter((id) => id !== null)),
+        ];
         const [classes, sections, subjects] = await Promise.all([
             this.prisma.class.findMany({
                 where: { id: { in: classIds }, schoolId },
@@ -160257,14 +160376,49 @@ let TeachersService = class TeachersService {
             if (row.sectionId && sectionsMap.get(row.sectionId) !== row.classId) {
                 throw new common_1.BadRequestException('Section does not belong to the selected class');
             }
-            if (subjectsMap.get(row.subjectId) !== row.classId) {
+            if (row.subjectId && subjectsMap.get(row.subjectId) !== row.classId) {
                 throw new common_1.BadRequestException('Subject does not belong to the selected class');
             }
         }
-        // Check for conflicts: same class + subject + overlapping section in the same academic year
-        if (desired.length > 0) {
-            const desiredClassIds = [...new Set(desired.map((d) => d.classId))];
-            const desiredSubjectIds = [...new Set(desired.map((d) => d.subjectId))];
+        // ── Conflict check: class-teacher section rows (subjectId=null) ─────────
+        const desiredClassTeacherRows = desiredRows.filter((d) => d.subjectId === null);
+        if (desiredClassTeacherRows.length > 0) {
+            const desiredClassIds = [...new Set(desiredClassTeacherRows.map((d) => d.classId))];
+            const desiredSectionIds = [
+                ...new Set(desiredClassTeacherRows.map((d) => d.sectionId).filter((id) => id !== null)),
+            ];
+            const conflictingClassTeachers = await this.prisma.teacherClassAssignment.findMany({
+                where: {
+                    schoolId,
+                    isActive: true,
+                    teacherId: { not: teacherId },
+                    classId: { in: desiredClassIds },
+                    sectionId: { in: desiredSectionIds },
+                    subjectId: null,
+                    ...this.buildAssignmentAcademicYearFilter(academicYearId),
+                },
+                include: {
+                    class: { select: { name: true } },
+                    section: { select: { name: true } },
+                    teacher: { select: { firstName: true, lastName: true } },
+                },
+            });
+            if (conflictingClassTeachers.length > 0) {
+                const conflicts = conflictingClassTeachers.map((row) => {
+                    const teacherName = `${row.teacher.firstName} ${row.teacher.lastName}`;
+                    const label = row.section?.name
+                        ? `${row.class.name} (${row.section.name})`
+                        : row.class.name;
+                    return `${label} already has class teacher ${teacherName}`;
+                });
+                throw new common_1.ConflictException([...new Set(conflicts)].join('; '));
+            }
+        }
+        // ── Conflict check: subject-teacher rows ────────────────────────────────
+        const desiredSubjectRows = desiredRows.filter((d) => d.subjectId !== null);
+        if (desiredSubjectRows.length > 0) {
+            const desiredClassIds = [...new Set(desiredSubjectRows.map((d) => d.classId))];
+            const desiredSubjectIds = [...new Set(desiredSubjectRows.map((d) => d.subjectId))];
             const conflicting = await this.prisma.teacherClassAssignment.findMany({
                 where: {
                     schoolId,
@@ -160283,8 +160437,10 @@ let TeachersService = class TeachersService {
             });
             // Check each desired row against existing assignments from other teachers
             const conflicts = [];
-            for (const d of desired) {
+            for (const d of desiredSubjectRows) {
                 for (const c of conflicting) {
+                    if (!c.subjectId)
+                        continue;
                     if (c.classId !== d.classId || c.subjectId !== d.subjectId)
                         continue;
                     const sameSection = c.sectionId === d.sectionId;
@@ -160307,7 +160463,7 @@ let TeachersService = class TeachersService {
                 throw new common_1.ConflictException(unique.join('; '));
             }
         }
-        // Manage year-specific teaching assignments while preserving class-teacher broad rows
+        // Manage year-specific teaching assignments.
         const existing = await this.prisma.teacherClassAssignment.findMany({
             where: {
                 teacherId,
@@ -160323,17 +160479,10 @@ let TeachersService = class TeachersService {
                 isActive: true,
             },
         });
-        const managedExisting = existing.filter((row) => {
-            const isClassTeacherBroadRow = teacher?.classTeacherOfId &&
-                row.classId === teacher.classTeacherOfId &&
-                row.sectionId === null &&
-                row.subjectId === null;
-            return !isClassTeacherBroadRow;
-        });
         // Run all mutating operations in a single transaction
         await this.prisma.$transaction(async (tx) => {
             // Step 1: Deactivate all managed assignments in the selected year scope
-            const activeIds = managedExisting.filter((a) => a.isActive).map((a) => a.id);
+            const activeIds = existing.filter((a) => a.isActive).map((a) => a.id);
             if (activeIds.length > 0) {
                 await tx.teacherClassAssignment.updateMany({
                     where: { id: { in: activeIds } },
@@ -160342,8 +160491,8 @@ let TeachersService = class TeachersService {
             }
             // Step 2: For each desired row, reactivate an existing record or create a new one.
             const usedIds = new Set();
-            for (const d of desired) {
-                const match = managedExisting.find((e) => e.classId === d.classId &&
+            for (const d of desiredRows) {
+                const match = existing.find((e) => e.classId === d.classId &&
                     e.sectionId === d.sectionId &&
                     e.subjectId === d.subjectId &&
                     e.academicYearId === d.academicYearId &&
@@ -160371,7 +160520,7 @@ let TeachersService = class TeachersService {
             }
             // Step 3: Hard-delete leftover managed duplicates to keep the table clean
             const keepIds = new Set(usedIds);
-            const toDelete = managedExisting.filter((e) => !keepIds.has(e.id)).map((e) => e.id);
+            const toDelete = existing.filter((e) => !keepIds.has(e.id)).map((e) => e.id);
             if (toDelete.length > 0) {
                 await tx.teacherClassAssignment.deleteMany({
                     where: { id: { in: toDelete } },

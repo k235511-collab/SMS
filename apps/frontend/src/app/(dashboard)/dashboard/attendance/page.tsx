@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Spinner } from '@/components/ui/spinner'
 import { SelectEmptyItem, SelectLoadingItem } from '@/components/ui/select-state-items'
 import { api } from '@/lib/api-client'
-import { ChevronLeft, ChevronRight, UserCheck, Clock, Loader2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, UserCheck, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useSession } from '@/context/session-context'
 import { useAuth } from '@/context/auth-context'
@@ -106,18 +106,11 @@ export default function AttendancePage() {
     setReferencesLoading(true)
     try {
       if (isTeacher) {
-        // Only show classes where the teacher is class teacher
-        const [assignmentsRes, profileRes] = await Promise.all([
-          teachersService.getMyClasses(),
-          teachersService.getMyProfile(),
-        ])
-        const classTeacherOfId = profileRes.success && profileRes.data ? profileRes.data.classTeacherOfId : null
+        // Only show classes where the teacher has class-teacher rows (subject=null)
+        const assignmentsRes = await teachersService.getMyClasses()
         if (assignmentsRes.success && assignmentsRes.data) {
           const assignments = Array.isArray(assignmentsRes.data) ? assignmentsRes.data : (assignmentsRes.data as any).data || []
-          // Filter to only class-teacher assignments
-          const classTeacherAssignments = classTeacherOfId
-            ? assignments.filter((a: any) => a.classId === classTeacherOfId || a.class?.id === classTeacherOfId)
-            : []
+          const classTeacherAssignments = assignments.filter((a: any) => !a.subjectId && !a.subject?.id)
           setTeacherAssignments(classTeacherAssignments)
           const classMap = new Map<string, ClassItem>()
           for (const a of classTeacherAssignments) {
