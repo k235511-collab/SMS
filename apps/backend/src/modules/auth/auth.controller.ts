@@ -1,5 +1,6 @@
-import { Controller, Post, Get, Body, HttpCode, HttpStatus } from '@nestjs/common'
+import { Controller, Post, Get, Body, HttpCode, HttpStatus, UseGuards } from '@nestjs/common'
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger'
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler'
 import { AuthService } from './auth.service'
 import { LoginDto, RegisterDto, RefreshTokenDto, ChangePasswordDto, GoogleSignInDto } from './dto'
 import { Public, CurrentUser } from '../../common/decorators'
@@ -15,6 +16,8 @@ export class AuthController {
   ) {}
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login with email, password and school slug' })
@@ -25,6 +28,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @Post('register')
   @ApiOperation({ summary: 'Register a new user in a school' })
   @ApiResponse({ status: 201, description: 'Registration successful' })
@@ -40,6 +45,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh access token' })
@@ -69,6 +76,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('google')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login with Google OAuth' })
@@ -140,6 +149,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 2, ttl: 60_000 } })
   @Post('register-school')
   @ApiOperation({
     summary: 'Submit a school registration request (public, requires admin approval)',

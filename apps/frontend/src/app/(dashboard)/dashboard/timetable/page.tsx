@@ -27,6 +27,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
+import { SelectEmptyItem, SelectLoadingItem } from '@/components/ui/select-state-items'
 import { api } from '@/lib/api-client'
 import { Plus, X, Settings, RotateCcw, Trash2, Pencil, User, CalendarClock } from 'lucide-react'
 import { toast } from 'sonner'
@@ -92,6 +94,7 @@ export default function TimetablePage() {
   const [allSubjects, setAllSubjects] = useState<SubjectItem[]>([])
   const [allTeachers, setAllTeachers] = useState<TeacherItem[]>([])
   const [periods, setPeriods] = useState<PeriodTemplate[]>([])
+  const [referencesLoading, setReferencesLoading] = useState(true)
   const [viewMode, setViewMode] = useState<ViewMode>(isTeacher ? 'today' : 'class')
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([])
 
@@ -99,6 +102,7 @@ export default function TimetablePage() {
   const [selectedClassId, setSelectedClassId] = useState('')
   const [selectedSectionId, setSelectedSectionId] = useState('')
   const [sections, setSections] = useState<SectionItem[]>([])
+  const [sectionsLoading, setSectionsLoading] = useState(false)
   const [slots, setSlots] = useState<TimetableSlot[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -113,6 +117,7 @@ export default function TimetablePage() {
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [availableTeachers, setAvailableTeachers] = useState<TeacherItem[]>([])
+  const [availableTeachersLoading, setAvailableTeachersLoading] = useState(false)
   const [form, setForm] = useState({
     dayOfWeek: '1', startTime: '08:00', endTime: '08:45',
     subjectId: '', teacherId: '', room: '',
@@ -216,77 +221,82 @@ export default function TimetablePage() {
   // ── Data fetching ─────────────────────────────────────────────────────────
 
   const fetchReferences = useCallback(async () => {
-    const [classRes, subRes, teachRes, periodRes] = await Promise.all([
-      api.get<PaginatedResponse<ClassItem>>('/academics/classes', { params: { pageSize: 100 } }),
-      api.get<PaginatedResponse<SubjectItem>>('/academics/subjects', { params: { pageSize: 100 } }),
-      api.get<PaginatedResponse<TeacherItem>>('/teachers', { params: { pageSize: 100 } }),
-      api.get<PeriodTemplate[]>('/timetable/periods'),
-    ])
-    if (classRes.success && classRes.data) {
-      const cls = classRes.data.data || classRes.data
-      setClasses(Array.isArray(cls) ? cls : [])
-    }
-    if (subRes.success && subRes.data) {
-      const subs = subRes.data.data || subRes.data
-      setAllSubjects(Array.isArray(subs) ? subs : [])
-    }
-    if (teachRes.success && teachRes.data) {
-      const t = teachRes.data.data || teachRes.data
-      setAllTeachers(Array.isArray(t) ? t : [])
-    }
-    if (periodRes.success && periodRes.data) {
-      setPeriods(Array.isArray(periodRes.data) ? periodRes.data : [])
-    }
-
-    // Fetch teacher assignments and profile if role matches
-    if (isTeacher) {
-      const [assignRes, profileRes] = await Promise.all([
-        teachersService.getMyClasses(),
-        teachersService.getMyProfile()
+    setReferencesLoading(true)
+    try {
+      const [classRes, subRes, teachRes, periodRes] = await Promise.all([
+        api.get<PaginatedResponse<ClassItem>>('/academics/classes', { params: { pageSize: 100 } }),
+        api.get<PaginatedResponse<SubjectItem>>('/academics/subjects', { params: { pageSize: 100 } }),
+        api.get<PaginatedResponse<TeacherItem>>('/teachers', { params: { pageSize: 100 } }),
+        api.get<PeriodTemplate[]>('/timetable/periods'),
       ])
-      
-      if (assignRes.success && assignRes.data) {
-        const assignData = Array.isArray(assignRes.data) ? assignRes.data : (assignRes.data as any).data || []
-        setAssignments(assignData)
-        
-        // Merge missing classes from assignments into the main 'classes' state
-        setClasses(prev => {
-          const newClasses = [...prev]
-          assignData.forEach((a: any) => {
-            if (a.class && !newClasses.some(c => c.id === a.class.id)) {
-              newClasses.push(a.class)
-            }
-          })
-          return newClasses
-        })
+      if (classRes.success && classRes.data) {
+        const cls = classRes.data.data || classRes.data
+        setClasses(Array.isArray(cls) ? cls : [])
       }
-      if (profileRes.success && profileRes.data) {
-        const profile = profileRes.data.data || profileRes.data
-        const ctId = profile.classTeacherOfId || null
-        setClassTeacherOfId(ctId)
+      if (subRes.success && subRes.data) {
+        const subs = subRes.data.data || subRes.data
+        setAllSubjects(Array.isArray(subs) ? subs : [])
+      }
+      if (teachRes.success && teachRes.data) {
+        const t = teachRes.data.data || teachRes.data
+        setAllTeachers(Array.isArray(t) ? t : [])
+      }
+      if (periodRes.success && periodRes.data) {
+        setPeriods(Array.isArray(periodRes.data) ? periodRes.data : [])
+      }
+
+      // Fetch teacher assignments and profile if role matches
+      if (isTeacher) {
+        const [assignRes, profileRes] = await Promise.all([
+          teachersService.getMyClasses(),
+          teachersService.getMyProfile()
+        ])
         
-        // If classTeacherOf is an object, add it to classes
-        if (profile.classTeacherOf && typeof profile.classTeacherOf === 'object') {
+        if (assignRes.success && assignRes.data) {
+          const assignData = Array.isArray(assignRes.data) ? assignRes.data : (assignRes.data as any).data || []
+          setAssignments(assignData)
+          
+          // Merge missing classes from assignments into the main 'classes' state
           setClasses(prev => {
-            if (!prev.some(c => c.id === profile.classTeacherOf.id)) {
-              return [...prev, profile.classTeacherOf]
-            }
-            return prev
-          })
-        } else if (ctId) {
-          // If we only have the ID, try to fetch class details specifically with sections
-          api.get<any>(`/academics/classes/${ctId}`, { params: { include: 'sections' } }).then(res => {
-            if (res.success && res.data) {
-              const cls = res.data.data || res.data
-              setClasses(prev => {
-                if (!prev.some(c => c.id === cls.id)) return [...prev, cls]
-                // If it already exists but doesn't have sections, update it
-                return prev.map(c => c.id === cls.id ? { ...c, ...cls } : c)
-              })
-            }
+            const newClasses = [...prev]
+            assignData.forEach((a: any) => {
+              if (a.class && !newClasses.some(c => c.id === a.class.id)) {
+                newClasses.push(a.class)
+              }
+            })
+            return newClasses
           })
         }
+        if (profileRes.success && profileRes.data) {
+          const profile = profileRes.data.data || profileRes.data
+          const ctId = profile.classTeacherOfId || null
+          setClassTeacherOfId(ctId)
+          
+          // If classTeacherOf is an object, add it to classes
+          if (profile.classTeacherOf && typeof profile.classTeacherOf === 'object') {
+            setClasses(prev => {
+              if (!prev.some(c => c.id === profile.classTeacherOf.id)) {
+                return [...prev, profile.classTeacherOf]
+              }
+              return prev
+            })
+          } else if (ctId) {
+            // If we only have the ID, try to fetch class details specifically with sections
+            api.get<any>(`/academics/classes/${ctId}`, { params: { include: 'sections' } }).then(res => {
+              if (res.success && res.data) {
+                const cls = res.data.data || res.data
+                setClasses(prev => {
+                  if (!prev.some(c => c.id === cls.id)) return [...prev, cls]
+                  // If it already exists but doesn't have sections, update it
+                  return prev.map(c => c.id === cls.id ? { ...c, ...cls } : c)
+                })
+              }
+            })
+          }
+        }
       }
+    } finally {
+      setReferencesLoading(false)
     }
   }, [selectedCampus?.id, isTeacher])
 
@@ -305,58 +315,57 @@ export default function TimetablePage() {
     if (!selectedClassId) {
       setSections([])
       setSelectedSectionId('')
+      setSectionsLoading(false)
       return
     }
 
     const fetchAllSections = async () => {
-      const cls = classes.find(c => c.id === selectedClassId)
-      if (cls?.sections && cls.sections.length > 0) {
-        setSections(cls.sections)
-        return
-      }
-
+      setSectionsLoading(true)
       try {
+        const cls = classes.find(c => c.id === selectedClassId)
+        if (cls?.sections && cls.sections.length > 0) {
+          setSections(cls.sections)
+          return
+        }
+
         const res = await api.get<SectionItem[]>(`/academics/sections/class/${selectedClassId}`)
         if (res.success && res.data) {
           const data = Array.isArray(res.data) ? res.data : (res.data as any).data || []
           setSections(data)
+          return
+        }
+
+        // If general API fails, try to see if assignments have anything
+        const assignedSections = assignments
+          .filter(a => (a.classId === selectedClassId || (a as any).class?.id === selectedClassId) && (a as any).section)
+          .map(a => (a as any).section!)
+
+        if (assignedSections.length > 0) {
+          const uniqueSections = assignedSections.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i)
+          setSections(uniqueSections)
         } else {
-          // If general API fails, try to see if assignments have anything
-          const assignedSections = assignments
-            .filter(a => (a.classId === selectedClassId || (a as any).class?.id === selectedClassId) && (a as any).section)
-            .map(a => (a as any).section!)
-          
-          if (assignedSections.length > 0) {
-            const uniqueSections = assignedSections.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i)
-            setSections(uniqueSections)
-          } else {
-            console.error('Failed to fetch sections:', res.message)
-            // If it's a class teacher, they really SHOULD have sections. 
-            // Maybe fetch the class again with expansion? 
-          }
+          console.error('Failed to fetch sections:', res.message)
         }
       } catch (err) {
         console.error('Error in fetchAllSections:', err)
+      } finally {
+        setSectionsLoading(false)
       }
     }
 
     if (isTeacher) {
-      // Get sections from assignments first
       const assignedSectionsForThisClass = assignments
         .filter(a => (a.classId === selectedClassId || (a as any).class?.id === selectedClassId) && (a as any).section)
         .map(a => (a as any).section!)
-      
+
       const uniqueAssigned = assignedSectionsForThisClass.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i)
 
-      // Check if teacher is assigned to this class (as teacher or class teacher)
-      const isAssigned = uniqueAssigned.length > 0 || 
-                        classTeacherOfId === selectedClassId || 
+      const isAssigned = uniqueAssigned.length > 0 ||
+                        classTeacherOfId === selectedClassId ||
                         user?.classTeacherOfId === selectedClassId
-       
+
       if (isAssigned) {
-        // Try getting all sections for the class
         fetchAllSections().then(() => {
-          // If fetchAllSections didn't find any (maybe due to 403), use assigned ones as fallback
           setSections(prev => {
             if (prev.length === 0 && uniqueAssigned.length > 0) return uniqueAssigned
             return prev
@@ -364,6 +373,7 @@ export default function TimetablePage() {
         })
       } else {
         setSections([])
+        setSectionsLoading(false)
       }
       return
     }
@@ -400,12 +410,27 @@ export default function TimetablePage() {
 
   // ── Fetch teacher availability when form day/time changes ─────────────────
   useEffect(() => {
-    if (!slotDialogOpen || !form.dayOfWeek || !form.startTime || !form.endTime) return
+    if (!slotDialogOpen || !form.dayOfWeek || !form.startTime || !form.endTime) {
+      setAvailableTeachers([])
+      setAvailableTeachersLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setAvailableTeachersLoading(true)
     api.get<TeacherItem[]>('/timetable/teachers/availability', {
       params: { dayOfWeek: form.dayOfWeek, startTime: form.startTime, endTime: form.endTime }
     }).then(res => {
+      if (cancelled) return
       if (res.success && res.data) setAvailableTeachers(Array.isArray(res.data) ? res.data : [])
+      else setAvailableTeachers([])
+    }).finally(() => {
+      if (!cancelled) setAvailableTeachersLoading(false)
     })
+
+    return () => {
+      cancelled = true
+    }
   }, [slotDialogOpen, form.dayOfWeek, form.startTime, form.endTime])
 
   // ── Slot Dialog Handlers ──────────────────────────────────────────────────
@@ -753,7 +778,7 @@ export default function TimetablePage() {
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between px-1">
-          <h2 className="text-lg font-semibold text-foreground">Today's Timeline</h2>
+          <h2 className="text-lg font-semibold text-foreground">Today&apos;s Timeline</h2>
           <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider">
             {ALL_DAYS[new Date().getDay()]}
           </Badge>
@@ -937,19 +962,33 @@ export default function TimetablePage() {
             <div className="flex flex-wrap items-end gap-4">
               <div className="w-full sm:w-52">
                 <Label className="mb-2">Class</Label>
-                <Select value={selectedClassId} onValueChange={v => { setSelectedClassId(v); setSelectedSectionId('') }}>
+                <Select value={selectedClassId} onValueChange={v => { setSelectedClassId(v); setSelectedSectionId('') }} disabled={referencesLoading}>
                   <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
                    <SelectContent>
-                    {availableClasses.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    {referencesLoading ? (
+                      <SelectLoadingItem label="Loading classes..." />
+                    ) : availableClasses.length > 0 ? (
+                      availableClasses.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)
+                    ) : (
+                      <SelectEmptyItem label="No classes available" />
+                    )}
                   </SelectContent>
                 </Select>
               </div>
               <div className="w-full sm:w-52">
                 <Label className="mb-2">Section</Label>
-                <Select value={selectedSectionId} onValueChange={setSelectedSectionId} disabled={!selectedClassId}>
-                  <SelectTrigger><SelectValue placeholder="Select section" /></SelectTrigger>
+                <Select value={selectedSectionId} onValueChange={setSelectedSectionId} disabled={!selectedClassId || sectionsLoading}>
+                  <SelectTrigger><SelectValue placeholder={sectionsLoading ? 'Loading sections...' : 'Select section'} /></SelectTrigger>
                   <SelectContent>
-                    {sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    {!selectedClassId ? (
+                      <SelectEmptyItem label="Select a class first" />
+                    ) : sectionsLoading ? (
+                      <SelectLoadingItem label="Loading sections..." />
+                    ) : sections.length > 0 ? (
+                      sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)
+                    ) : (
+                      <SelectEmptyItem label="No sections available" />
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -981,12 +1020,18 @@ export default function TimetablePage() {
               <div className="flex flex-wrap items-end gap-4 mb-6">
                 <div className="w-full sm:w-64">
                   <Label className="mb-2">Teacher</Label>
-                  <Select value={selectedTeacherId} onValueChange={setSelectedTeacherId}>
+                  <Select value={selectedTeacherId} onValueChange={setSelectedTeacherId} disabled={referencesLoading}>
                     <SelectTrigger><SelectValue placeholder="Select teacher" /></SelectTrigger>
                     <SelectContent>
-                      {allTeachers.map(t => (
-                        <SelectItem key={t.id} value={t.id}>{t.firstName} {t.lastName} ({t.employeeId})</SelectItem>
-                      ))}
+                      {referencesLoading ? (
+                        <SelectLoadingItem label="Loading teachers..." />
+                      ) : allTeachers.length > 0 ? (
+                        allTeachers.map(t => (
+                          <SelectItem key={t.id} value={t.id}>{t.firstName} {t.lastName} ({t.employeeId})</SelectItem>
+                        ))
+                      ) : (
+                        <SelectEmptyItem label="No teachers available" />
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1031,6 +1076,12 @@ export default function TimetablePage() {
               {ALL_DAYS[parseInt(form.dayOfWeek)]}, {form.startTime} – {form.endTime}
             </p>
           </DialogHeader>
+          {(referencesLoading || availableTeachersLoading) && (
+            <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <Spinner size="sm" />
+              <span>{referencesLoading ? 'Loading timetable references...' : 'Checking teacher availability...'}</span>
+            </div>
+          )}
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label>Day *</Label>
@@ -1053,28 +1104,40 @@ export default function TimetablePage() {
             </div>
             <div className="grid gap-2">
               <Label>Subject *</Label>
-              <Select value={form.subjectId} onValueChange={v => setForm({ ...form, subjectId: v })}>
-                <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+              <Select value={form.subjectId} onValueChange={v => setForm({ ...form, subjectId: v })} disabled={referencesLoading}>
+                <SelectTrigger><SelectValue placeholder={referencesLoading ? 'Loading subjects...' : 'Select subject'} /></SelectTrigger>
                 <SelectContent>
-                  {classSubjects.map(s => <SelectItem key={s.id} value={s.id}>{s.name} ({s.code})</SelectItem>)}
+                  {referencesLoading ? (
+                    <SelectLoadingItem label="Loading subjects..." />
+                  ) : classSubjects.length > 0 ? (
+                    classSubjects.map(s => <SelectItem key={s.id} value={s.id}>{s.name} ({s.code})</SelectItem>)
+                  ) : (
+                    <SelectEmptyItem label="No subjects available" />
+                  )}
                 </SelectContent>
               </Select>
             </div>
             <div className="grid gap-2">
               <Label>Teacher</Label>
-              <Select value={form.teacherId} onValueChange={v => setForm({ ...form, teacherId: v })}>
-                <SelectTrigger><SelectValue placeholder="Select teacher (optional)" /></SelectTrigger>
+              <Select value={form.teacherId} onValueChange={v => setForm({ ...form, teacherId: v })} disabled={availableTeachersLoading}>
+                <SelectTrigger><SelectValue placeholder={availableTeachersLoading ? 'Loading teachers...' : 'Select teacher (optional)'} /></SelectTrigger>
                 <SelectContent>
-                  {availableTeachers.map(t => (
-                    <SelectItem key={t.id} value={t.id} disabled={!t.isFree && t.id !== form.teacherId}>
-                      <span className={!t.isFree && t.id !== form.teacherId ? 'text-muted-foreground line-through' : ''}>
-                        {t.firstName} {t.lastName}
-                      </span>
-                      {!t.isFree && t.id !== form.teacherId && (
-                        <span className="ml-2 text-[10px] text-red-500">(Busy)</span>
-                      )}
-                    </SelectItem>
-                  ))}
+                  {availableTeachersLoading ? (
+                    <SelectLoadingItem label="Loading teachers..." />
+                  ) : availableTeachers.length > 0 ? (
+                    availableTeachers.map(t => (
+                      <SelectItem key={t.id} value={t.id} disabled={!t.isFree && t.id !== form.teacherId}>
+                        <span className={!t.isFree && t.id !== form.teacherId ? 'text-muted-foreground line-through' : ''}>
+                          {t.firstName} {t.lastName}
+                        </span>
+                        {!t.isFree && t.id !== form.teacherId && (
+                          <span className="ml-2 text-[10px] text-red-500">(Busy)</span>
+                        )}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectEmptyItem label="No teachers available" />
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -1085,7 +1148,7 @@ export default function TimetablePage() {
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-            <Button onClick={handleSaveSlot} disabled={saving || !form.subjectId || !form.startTime || !form.endTime}>
+            <Button onClick={handleSaveSlot} isLoading={saving} disabled={!form.subjectId || !form.startTime || !form.endTime}>
               {saving ? 'Saving...' : editingSlotId ? 'Update Slot' : 'Add Slot'}
             </Button>
           </DialogFooter>
@@ -1125,7 +1188,7 @@ export default function TimetablePage() {
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-            <Button onClick={handleSavePeriod} disabled={periodSaving || !periodForm.label || !periodForm.startTime || !periodForm.endTime}>
+            <Button onClick={handleSavePeriod} isLoading={periodSaving} disabled={!periodForm.label || !periodForm.startTime || !periodForm.endTime}>
               {periodSaving ? 'Saving...' : editingPeriod ? 'Update' : 'Add'}
             </Button>
           </DialogFooter>

@@ -36,8 +36,8 @@ export class AssignmentsController {
     @Get(':id')
     @ApiOperation({ summary: 'Get assignment details' })
     @RequirePermission(Permission.READ_ASSIGNMENT)
-    findOne(@Param('id') id: string, @TenantId() schoolId: string) {
-        return this.assignmentsService.findById(id, schoolId)
+    findOne(@Param('id') id: string, @TenantId() schoolId: string, @TeacherId() teacherId?: string | null) {
+        return this.assignmentsService.findById(id, schoolId, teacherId)
     }
 
     @Patch(':id')
@@ -64,13 +64,13 @@ export class AssignmentsController {
 
     @Patch('submissions/:id/grade')
     @ApiOperation({ summary: 'Grade a submission' })
-    grade(@Param('id') id: string, @TenantId() schoolId: string, @Body() dto: GradeSubmissionDto) {
-        return this.submissionsService.grade(id, schoolId, dto)
+    grade(@Param('id') id: string, @TenantId() schoolId: string, @Body() dto: GradeSubmissionDto, @TeacherId() teacherId?: string | null) {
+        return this.submissionsService.grade(id, schoolId, dto, teacherId)
     }
 
     @Get(':id/submissions')
     @ApiOperation({ summary: 'List submissions for an assignment' })
-    getSubmissions(@Param('id') assignmentId: string, @TenantId() schoolId: string) {
-        return this.submissionsService.findByAssignment(assignmentId, schoolId)
+    getSubmissions(@Param('id') assignmentId: string, @TenantId() schoolId: string, @TeacherId() teacherId?: string | null) {
+        return this.submissionsService.findByAssignment(assignmentId, schoolId, teacherId)
     }
 }

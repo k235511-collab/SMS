@@ -57,6 +57,9 @@ export function ProtectedRoute({
     hasRole,
   } = useAuth()
   const router = useRouter()
+  const resolvedRedirectTo = user?.teacherId && redirectTo === '/dashboard'
+    ? '/dashboard/my-classes'
+    : redirectTo
 
   useEffect(() => {
     if (isLoading) return
@@ -81,7 +84,7 @@ export function ProtectedRoute({
     }
 
     if (!allowed) {
-      router.replace(redirectTo)
+      router.replace(resolvedRedirectTo)
     }
   }, [
     isAuthenticated,
@@ -91,7 +94,7 @@ export function ProtectedRoute({
     permissions,
     role,
     roles,
-    redirectTo,
+    resolvedRedirectTo,
     router,
     hasPermission,
     hasAllPermissions,

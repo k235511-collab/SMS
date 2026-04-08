@@ -107,6 +107,41 @@ export class TeacherScopeService {
     })
   }
 
+  async getAssignmentAccessConditions(
+    teacherId: string,
+    schoolId: string,
+    academicYearId?: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const { assignments, classTeacherOfId } = await this.getResolvedAssignments(
+      teacherId,
+      schoolId,
+      academicYearId,
+    )
+    const conditions: Array<Record<string, unknown>> = []
+
+    if (classTeacherOfId) {
+      conditions.push({ classId: classTeacherOfId })
+    }
+
+    for (const assignment of assignments) {
+      const condition: Record<string, unknown> = { classId: assignment.classId }
+      if (assignment.subjectId) {
+        condition.subjectId = assignment.subjectId
+      }
+      conditions.push(condition)
+    }
+
+    const seen = new Set<string>()
+    return conditions.filter((condition) => {
+      const key = JSON.stringify(condition)
+      if (seen.has(key)) {
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+  }
+
   /**
    * Resolve all classIds, sectionIds, and subjectIds assigned to a teacher.
    * Only returns active assignments.

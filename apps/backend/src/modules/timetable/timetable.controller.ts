@@ -19,7 +19,7 @@ import {
   CreatePeriodTemplateDto,
   UpdatePeriodTemplateDto,
 } from './dto'
-import { RequirePermission, TenantId, CampusId } from '../../common/decorators'
+import { RequirePermission, TenantId, CampusId, TeacherId } from '../../common/decorators'
 import { TenantGuard } from '../../common/guards'
 import { Permission } from '../../common/constants'
 
@@ -89,8 +89,12 @@ export class TimetableController {
   @Get('teacher/:teacherId/schedule')
   @RequirePermission(Permission.READ_TIMETABLE)
   @ApiOperation({ summary: 'Get full weekly schedule for a teacher' })
-  getTeacherSchedule(@Param('teacherId') teacherId: string, @TenantId() schoolId: string) {
-    return this.service.getTeacherSchedule(teacherId, schoolId)
+  getTeacherSchedule(
+    @Param('teacherId') teacherId: string,
+    @TenantId() schoolId: string,
+    @TeacherId() requesterTeacherId?: string | null,
+  ) {
+    return this.service.getTeacherSchedule(teacherId, schoolId, requesterTeacherId)
   }
 
   // ─── Timetable Slot Routes ────────────────────────────────────────────────
@@ -111,16 +115,24 @@ export class TimetableController {
   @RequirePermission(Permission.READ_TIMETABLE)
   @ApiOperation({ summary: 'Get timetable for a section' })
   @ApiResponse({ status: 200, description: 'Section timetable' })
-  findBySection(@Param('sectionId') sectionId: string, @TenantId() schoolId: string) {
-    return this.service.findBySection(sectionId, schoolId)
+  findBySection(
+    @Param('sectionId') sectionId: string,
+    @TenantId() schoolId: string,
+    @TeacherId() requesterTeacherId?: string | null,
+  ) {
+    return this.service.findBySection(sectionId, schoolId, requesterTeacherId)
   }
 
   @Get('teacher/:teacherId')
   @RequirePermission(Permission.READ_TIMETABLE)
   @ApiOperation({ summary: 'Get timetable for a teacher' })
   @ApiResponse({ status: 200, description: 'Teacher timetable' })
-  findByTeacher(@Param('teacherId') teacherId: string, @TenantId() schoolId: string) {
-    return this.service.findByTeacher(teacherId, schoolId)
+  findByTeacher(
+    @Param('teacherId') teacherId: string,
+    @TenantId() schoolId: string,
+    @TeacherId() requesterTeacherId?: string | null,
+  ) {
+    return this.service.findByTeacher(teacherId, schoolId, requesterTeacherId)
   }
 
   @Patch(':id')

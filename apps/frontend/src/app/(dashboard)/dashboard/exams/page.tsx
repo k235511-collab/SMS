@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
+import { SelectEmptyItem, SelectLoadingItem } from '@/components/ui/select-state-items'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api-client'
 import { Plus, Search, MoreHorizontal, Pencil, Eye, Trash2, Filter } from 'lucide-react'
@@ -131,6 +133,10 @@ export default function ExamsPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([])
   // Teacher assignments (used to scope dropdowns when isTeacher)
   const [teacherAssignments, setTeacherAssignments] = useState<any[]>([])
+  const [dropdownDataLoading, setDropdownDataLoading] = useState(true)
+  const [modalSectionsLoading, setModalSectionsLoading] = useState(false)
+  const [subjectsLoading, setSubjectsLoading] = useState(false)
+  const [resultsSectionsLoading, setResultsSectionsLoading] = useState(false)
 
   const [resultsRows, setResultsRows] = useState<ExamStudentResultRow[]>([])
   const [resultsLoading, setResultsLoading] = useState(false)
@@ -158,6 +164,7 @@ export default function ExamsPage() {
   // Fetch dropdown data
   useEffect(() => {
     const fetchDropdownData = async () => {
+      setDropdownDataLoading(true)
       try {
         if (isTeacher) {
           // Teacher: scope dropdowns to their assigned classes/subjects
@@ -210,6 +217,8 @@ export default function ExamsPage() {
         }
       } catch (error) {
         console.error('Failed to fetch dropdown data:', error)
+      } finally {
+        setDropdownDataLoading(false)
       }
     }
     fetchDropdownData()
@@ -220,8 +229,11 @@ export default function ExamsPage() {
     const fetchModalSections = async () => {
       if (!form.classId) {
         setModalSections([])
+        setModalSectionsLoading(false)
         return
       }
+
+      setModalSectionsLoading(true)
 
       if (isTeacher) {
         // Teacher: filter sections from their assignments for the selected class
@@ -249,6 +261,7 @@ export default function ExamsPage() {
           if (!seen.has(s.id)) { seen.add(s.id); unique.push(s) }
         }
         setModalSections(unique)
+        setModalSectionsLoading(false)
         return
       }
 
@@ -259,6 +272,8 @@ export default function ExamsPage() {
       } else {
         setModalSections([])
       }
+
+      setModalSectionsLoading(false)
     }
 
     fetchModalSections()
@@ -267,26 +282,73 @@ export default function ExamsPage() {
   // Fetch sections for student results filter
   useEffect(() => {
     const fetchResultsSections = async () => {
-      const endpoint = resultsClassId
-        ? `/academics/sections/class/${resultsClassId}`
-        : '/academics/sections'
+      setResultsSectionsLoading(true)
+      try {
+        if (isTeacher) {
+          if (!resultsClassId) {
+            setResultsSections([])
+            return
+          }
 
-      const res = await api.get<any>(endpoint, { params: resultsClassId ? undefined : { pageSize: 200 } })
-      if (res.success && res.data) {
-        const sectionData = Array.isArray(res.data) ? res.data : (res.data as any).data || []
-        setResultsSections(sectionData)
-      } else {
-        setResultsSections([])
+          const classAssignments = teacherAssignments.filter((a: any) => a.class?.id === resultsClassId)
+          const hasFullClassAccess = classAssignments.some((a: any) => !a.sectionId)
+
+          if (hasFullClassAccess) {
+            const res = await api.get<any>(`/academics/sections/class/${resultsClassId}`)
+            if (res.success && res.data) {
+              const sectionData = Array.isArray(res.data) ? res.data : (res.data as any).data || []
+              setResultsSections(sectionData)
+            } else {
+              setResultsSections([])
+            }
+            return
+          }
+
+          const explicitSections = classAssignments
+            .filter((a: any) => a.section)
+            .map((a: any) => ({ id: a.section.id, name: a.section.name, classId: resultsClassId }))
+          const seen = new Set<string>()
+          const uniqueSections: Section[] = []
+          for (const section of explicitSections) {
+            if (!seen.has(section.id)) {
+              seen.add(section.id)
+              uniqueSections.push(section)
+            }
+          }
+          setResultsSections(uniqueSections)
+          return
+        }
+
+        const endpoint = resultsClassId
+          ? `/academics/sections/class/${resultsClassId}`
+          : '/academics/sections'
+
+        const res = await api.get<any>(endpoint, { params: resultsClassId ? undefined : { pageSize: 200 } })
+        if (res.success && res.data) {
+          const sectionData = Array.isArray(res.data) ? res.data : (res.data as any).data || []
+          setResultsSections(sectionData)
+        } else {
+          setResultsSections([])
+        }
+      } finally {
+        setResultsSectionsLoading(false)
       }
     }
 
     fetchResultsSections()
-  }, [resultsClassId, selectedCampus?.id])
+  }, [resultsClassId, selectedCampus?.id, isTeacher, teacherAssignments])
 
   // Fetch subjects when class changes
   useEffect(() => {
     const fetchSubjects = async () => {
-      if (form.classId) {
+      if (!form.classId) {
+        setSubjects([])
+        setSubjectsLoading(false)
+        return
+      }
+
+      setSubjectsLoading(true)
+      try {
         if (isTeacher) {
           // Teacher: filter subjects from assignments for the selected class
           const classAssignments = teacherAssignments.filter((a: any) => a.class?.id === form.classId)
@@ -298,6 +360,8 @@ export default function ExamsPage() {
             if (res.success && res.data) {
               const subjectsData = Array.isArray(res.data) ? res.data : (res.data as any).data || []
               setSubjects(subjectsData)
+            } else {
+              setSubjects([])
             }
             return
           }
@@ -316,7 +380,11 @@ export default function ExamsPage() {
         if (res.success && res.data) {
           const subjectsData = Array.isArray(res.data) ? res.data : (res.data as any).data || []
           setSubjects(subjectsData)
+        } else {
+          setSubjects([])
         }
+      } finally {
+        setSubjectsLoading(false)
       }
     }
     fetchSubjects()
@@ -686,15 +754,22 @@ export default function ExamsPage() {
                         setFilterClass(v === 'all' ? '' : v)
                         setPage(1)
                       }}
+                      disabled={dropdownDataLoading}
                     >
                       <SelectTrigger className="w-full sm:w-44">
                         <SelectValue placeholder="All Classes" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Classes</SelectItem>
-                        {classes.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                        ))}
+                        {dropdownDataLoading ? (
+                          <SelectLoadingItem label="Loading classes..." />
+                        ) : classes.length > 0 ? (
+                          classes.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          ))
+                        ) : (
+                          <SelectEmptyItem label="No classes available" />
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -716,6 +791,8 @@ export default function ExamsPage() {
               onSectionChange={setResultsSectionId}
               classes={classes.map((item) => ({ id: item.id, name: item.name }))}
               sections={uniqueResultsSections.map((item) => ({ id: item.id, name: item.name }))}
+              classesLoading={dropdownDataLoading}
+              sectionsLoading={resultsSectionsLoading}
               onReset={() => {
                 setResultsSearch('')
                 setResultsClassId('')
@@ -758,6 +835,18 @@ export default function ExamsPage() {
           </DialogHeader>
           {!editing && <CampusBadge />}
           <div className="grid gap-4 py-4">
+            {(dropdownDataLoading || modalSectionsLoading || subjectsLoading) && (
+              <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                <Spinner size="sm" />
+                <span>
+                  {dropdownDataLoading
+                    ? 'Loading exam options...'
+                    : modalSectionsLoading
+                      ? 'Loading sections...'
+                      : 'Loading subjects...'}
+                </span>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Exam Name *</Label>
@@ -805,37 +894,75 @@ export default function ExamsPage() {
               </div>
               <div className="grid gap-2">
                 <Label>Class *</Label>
-                <Select value={form.classId} onValueChange={(v) => setForm({ ...form, classId: v, sectionId: '', subjectId: '' })}>
+                <Select
+                  value={form.classId}
+                  onValueChange={(v) => setForm({ ...form, classId: v, sectionId: '', subjectId: '' })}
+                  disabled={dropdownDataLoading}
+                >
                   <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
                   <SelectContent>
-                    {classes.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))}
+                    {dropdownDataLoading ? (
+                      <SelectLoadingItem label="Loading classes..." />
+                    ) : classes.length > 0 ? (
+                      classes.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      ))
+                    ) : (
+                      <SelectEmptyItem label="No classes available" />
+                    )}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
                 <Label>Section *</Label>
-                <Select value={form.sectionId} onValueChange={(v) => setForm({ ...form, sectionId: v })} disabled={!form.classId}>
-                  <SelectTrigger><SelectValue placeholder="Select section" /></SelectTrigger>
+                <Select
+                  value={form.sectionId}
+                  onValueChange={(v) => setForm({ ...form, sectionId: v })}
+                  disabled={!form.classId || modalSectionsLoading}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={modalSectionsLoading ? 'Loading sections...' : 'Select section'} />
+                  </SelectTrigger>
                   <SelectContent>
                     {!editing && form.classId && !isTeacher && (
                       <SelectItem value={ALL_SECTIONS_VALUE}>All Sections</SelectItem>
                     )}
-                    {modalSections.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
+                    {!form.classId ? (
+                      <SelectEmptyItem label="Select a class first" />
+                    ) : modalSectionsLoading ? (
+                      <SelectLoadingItem label="Loading sections..." />
+                    ) : modalSections.length > 0 ? (
+                      modalSections.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))
+                    ) : (
+                      <SelectEmptyItem label="No sections available" />
+                    )}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
                 <Label>Subject *</Label>
-                <Select value={form.subjectId} onValueChange={(v) => setForm({ ...form, subjectId: v })} disabled={!form.classId}>
-                  <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                <Select
+                  value={form.subjectId}
+                  onValueChange={(v) => setForm({ ...form, subjectId: v })}
+                  disabled={!form.classId || subjectsLoading}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={subjectsLoading ? 'Loading subjects...' : 'Select subject'} />
+                  </SelectTrigger>
                   <SelectContent>
-                    {subjects.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
+                    {!form.classId ? (
+                      <SelectEmptyItem label="Select a class first" />
+                    ) : subjectsLoading ? (
+                      <SelectLoadingItem label="Loading subjects..." />
+                    ) : subjects.length > 0 ? (
+                      subjects.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))
+                    ) : (
+                      <SelectEmptyItem label="No subjects available" />
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -845,12 +972,18 @@ export default function ExamsPage() {
               {!isTeacher && (
               <div className="grid gap-2">
                 <Label>Teacher (Invigilator)</Label>
-                <Select value={form.teacherId} onValueChange={(v) => setForm({ ...form, teacherId: v })}>
+                <Select value={form.teacherId} onValueChange={(v) => setForm({ ...form, teacherId: v })} disabled={dropdownDataLoading}>
                   <SelectTrigger><SelectValue placeholder="Select teacher" /></SelectTrigger>
                   <SelectContent>
-                    {teachers.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>{t.firstName} {t.lastName} ({t.employeeId})</SelectItem>
-                    ))}
+                    {dropdownDataLoading ? (
+                      <SelectLoadingItem label="Loading teachers..." />
+                    ) : teachers.length > 0 ? (
+                      teachers.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>{t.firstName} {t.lastName} ({t.employeeId})</SelectItem>
+                      ))
+                    ) : (
+                      <SelectEmptyItem label="No teachers available" />
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -911,7 +1044,7 @@ export default function ExamsPage() {
 
           <DialogFooter>
             <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-            <Button onClick={handleSave} disabled={saving || !form.name || !form.academicYearId || !form.classId || !form.sectionId || !form.subjectId}>
+            <Button onClick={handleSave} isLoading={saving} disabled={!form.name || !form.academicYearId || !form.classId || !form.sectionId || !form.subjectId}>
               {saving ? 'Saving...' : editing ? 'Update' : 'Create'}
             </Button>
           </DialogFooter>

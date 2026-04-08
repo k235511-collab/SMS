@@ -7,7 +7,7 @@ import { PaginatedResult } from '../../common/dto'
 describe('ExamsService – findAllExams teacher scoping', () => {
   let service: ExamsService
   let prisma: { exam: { findMany: jest.Mock; count: jest.Mock }; teacher: { findFirst: jest.Mock }; $transaction: jest.Mock }
-  let teacherScope: { getScope: jest.Mock }
+  let teacherScope: { getExamAccessConditions: jest.Mock }
 
   const SCHOOL_ID = 'school-1'
   const TEACHER_ID = 'teacher-1'
@@ -27,7 +27,7 @@ describe('ExamsService – findAllExams teacher scoping', () => {
     }
 
     teacherScope = {
-      getScope: jest.fn(),
+      getExamAccessConditions: jest.fn(),
     }
 
     const module: TestingModule = await Test.createTestingModule({
@@ -47,12 +47,10 @@ describe('ExamsService – findAllExams teacher scoping', () => {
 
   // ─── Scenario 1: Class teacher with subjectIds ──────────────────────
   it('class teacher sees all subjects for own class + restricted subjects for other classes', async () => {
-    teacherScope.getScope.mockResolvedValue({
-      classIds: [CLASS_A, CLASS_B],
-      sectionIds: [SECTION_1],
-      subjectIds: [SUBJECT_X],
-      classTeacherOfId: CLASS_A,
-    })
+    teacherScope.getExamAccessConditions.mockResolvedValue([
+      { classId: CLASS_A },
+      { classId: CLASS_B, sectionId: SECTION_1, subjectId: SUBJECT_X },
+    ])
 
     const fakeExams = [{ id: 'exam-1' }]
     prisma.$transaction.mockResolvedValue([fakeExams, 1])
@@ -67,18 +65,18 @@ describe('ExamsService – findAllExams teacher scoping', () => {
     const txArgs = prisma.$transaction.mock.calls[0][0]
     expect(txArgs).toHaveLength(2) // [findMany promise, count promise]
 
-    // getTeacherScope was called for the effective teacher
-    expect(teacherScope.getScope).toHaveBeenCalledWith(TEACHER_ID, SCHOOL_ID)
+    expect(teacherScope.getExamAccessConditions).toHaveBeenCalledWith(
+      TEACHER_ID,
+      SCHOOL_ID,
+      undefined,
+    )
   })
 
   // ─── Scenario 2: Regular teacher with subjectIds, no classTeacherOfId ─
   it('regular teacher filters by assigned classes and subjects', async () => {
-    teacherScope.getScope.mockResolvedValue({
-      classIds: [CLASS_A],
-      sectionIds: [SECTION_1],
-      subjectIds: [SUBJECT_X],
-      classTeacherOfId: null,
-    })
+    teacherScope.getExamAccessConditions.mockResolvedValue([
+      { classId: CLASS_A, sectionId: SECTION_1, subjectId: SUBJECT_X },
+    ])
 
     prisma.$transaction.mockResolvedValue([[], 0])
 
@@ -87,17 +85,16 @@ describe('ExamsService – findAllExams teacher scoping', () => {
     expect(result).toBeInstanceOf(PaginatedResult)
     expect(result.data).toEqual([])
     expect(result.meta.total).toBe(0)
-    expect(teacherScope.getScope).toHaveBeenCalledWith(TEACHER_ID, SCHOOL_ID)
+    expect(teacherScope.getExamAccessConditions).toHaveBeenCalledWith(
+      TEACHER_ID,
+      SCHOOL_ID,
+      undefined,
+    )
   })
 
   // ─── Scenario 3: Teacher with no subjectIds → classId-only filtering ─
   it('teacher with no subjectIds filters by classId only', async () => {
-    teacherScope.getScope.mockResolvedValue({
-      classIds: [CLASS_A],
-      sectionIds: [],
-      subjectIds: [],
-      classTeacherOfId: null,
-    })
+    teacherScope.getExamAccessConditions.mockResolvedValue([{ classId: CLASS_A }])
 
     prisma.$transaction.mockResolvedValue([[], 0])
 
@@ -105,17 +102,16 @@ describe('ExamsService – findAllExams teacher scoping', () => {
 
     expect(result).toBeInstanceOf(PaginatedResult)
     expect(result.data).toEqual([])
-    expect(teacherScope.getScope).toHaveBeenCalledWith(TEACHER_ID, SCHOOL_ID)
+    expect(teacherScope.getExamAccessConditions).toHaveBeenCalledWith(
+      TEACHER_ID,
+      SCHOOL_ID,
+      undefined,
+    )
   })
 
   // ─── Scenario 4: Empty classIds → early return ──────────────────────
   it('returns empty when teacher has no assigned classes', async () => {
-    teacherScope.getScope.mockResolvedValue({
-      classIds: [],
-      sectionIds: [],
-      subjectIds: [],
-      classTeacherOfId: null,
-    })
+    teacherScope.getExamAccessConditions.mockResolvedValue([])
 
     const result = await callFindAll()
 
@@ -132,12 +128,7 @@ describe('ExamsService – findAllExams teacher scoping', () => {
   it('returns empty when class teacher OR branch produces no valid conditions', async () => {
     // classTeacherOfId is set but classIds only contains that class,
     // and a classId filter excludes it
-    teacherScope.getScope.mockResolvedValue({
-      classIds: [CLASS_A],
-      sectionIds: [],
-      subjectIds: [SUBJECT_X],
-      classTeacherOfId: CLASS_A,
-    })
+    teacherScope.getExamAccessConditions.mockResolvedValue([])
 
     // Querying with classId filter that won't match scope
     const result = await callFindAll({ classId: 'non-existent-class' })

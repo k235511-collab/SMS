@@ -13,6 +13,7 @@ import {
   CreateExpenseDto,
   UpdateExpenseDto,
 } from './dto'
+import { calculateInvoiceDiscountFields, calculateInvoiceStatus } from './finance.utils'
 
 @Injectable()
 export class FinanceService {
@@ -122,28 +123,13 @@ export class FinanceService {
       where: { schoolId, isCurrent: true },
       select: { id: true },
     })
-    let discountFields: { grossAmount: number; discountType: any; discountValue: number | null; discountAmount: number; totalAmount: number } = {
-      grossAmount: dto.totalAmount,
-      discountType: null,
-      discountValue: null,
-      discountAmount: 0,
-      totalAmount: dto.totalAmount,
-    }
+    let discountFields = calculateInvoiceDiscountFields(dto.totalAmount)
     if (currentYear) {
       const enrollment = await this.prisma.studentEnrollment.findUnique({
         where: { studentId_academicYearId: { studentId: dto.studentId, academicYearId: currentYear.id } },
         select: { discountType: true, discountValue: true },
       })
-      if (enrollment?.discountType && enrollment?.discountValue && enrollment.discountValue > 0) {
-        const feeAmount = dto.totalAmount
-        if (enrollment.discountType === 'PERCENTAGE') {
-          const disc = Math.round(feeAmount * Math.min(enrollment.discountValue, 100) / 100)
-          discountFields = { grossAmount: feeAmount, discountType: enrollment.discountType, discountValue: enrollment.discountValue, discountAmount: disc, totalAmount: feeAmount - disc }
-        } else {
-          const disc = Math.min(enrollment.discountValue, feeAmount)
-          discountFields = { grossAmount: feeAmount, discountType: enrollment.discountType, discountValue: enrollment.discountValue, discountAmount: disc, totalAmount: feeAmount - disc }
-        }
-      }
+      discountFields = calculateInvoiceDiscountFields(dto.totalAmount, enrollment)
     }
 
     return this.prisma.invoice.create({
@@ -292,11 +278,7 @@ export class FinanceService {
       const paymentAmount = Number(payment.amount)
       const newPaidAmount = invoicePaid + paymentAmount
 
-      const newStatus = newPaidAmount >= invoiceTotal
-        ? 'PAID'
-        : newPaidAmount > 0
-          ? 'PARTIAL'
-          : 'UNPAID'
+      const newStatus = calculateInvoiceStatus(newPaidAmount, invoiceTotal)
 
       await tx.invoice.update({
         where: { id: payment.invoice.id },
@@ -353,7 +335,7 @@ export class FinanceService {
         throw new BadRequestException('Payment amount exceeds remaining balance')
       }
 
-      const newStatus = newPaidAmount >= totalAmount ? 'PAID' : 'PARTIAL'
+      const newStatus = calculateInvoiceStatus(newPaidAmount, totalAmount)
 
       const payment = await tx.feePayment.create({
         data: {
@@ -535,13 +517,7 @@ export class FinanceService {
       const newPaidAmount = Math.max(0, invoicePaid - paymentAmount)
 
       const isOverdue = new Date(payment.invoice.dueDate) < new Date() && newPaidAmount < invoiceTotal
-      const newStatus = newPaidAmount >= invoiceTotal
-        ? 'PAID'
-        : isOverdue
-          ? 'OVERDUE'
-          : newPaidAmount > 0
-            ? 'PARTIAL'
-            : 'UNPAID'
+      const newStatus = calculateInvoiceStatus(newPaidAmount, invoiceTotal, isOverdue)
 
       await tx.invoice.update({
         where: { id: payment.invoice.id },

@@ -24,17 +24,19 @@ export function StatCard({ label, value, icon: Icon, color, href, className }: S
   const inner = (
     <Card className={cn('group transition-all hover:shadow-lg', className)}>
       <CardBody className="flex items-center gap-4 p-5">
-        <div className={cn('rounded-xl p-3 text-white', color)}>
+        <div className={cn('shrink-0 rounded-xl p-3 text-white', color)}>
           <Icon className="h-6 w-6" />
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             {label}
           </p>
-          <p className="mt-1 text-2xl font-bold text-foreground truncate">{value}</p>
+          <p className="mt-1 overflow-visible whitespace-normal break-words text-2xl font-bold leading-tight tabular-nums text-foreground">
+            {value}
+          </p>
         </div>
         {href && (
-          <ArrowUpRight className="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+          <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         )}
       </CardBody>
     </Card>

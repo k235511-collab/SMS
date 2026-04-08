@@ -152,11 +152,16 @@ export default function ExamDetailPage() {
   }, [examId])
 
   const fetchTeachers = useCallback(async () => {
+    if (user?.teacherId) {
+      setTeachers([])
+      return
+    }
+
     const res = await api.get<{ data: Teacher[] }>('/teachers', { params: { pageSize: 100 } })
     if (res.success && res.data) {
       setTeachers(res.data.data || [])
     }
-  }, [selectedCampus?.id])
+  }, [selectedCampus?.id, user?.teacherId])
 
   const fetchGradingScales = useCallback(async () => {
     const res = await api.get<GradingScale[]>('/exams/grading-scales')

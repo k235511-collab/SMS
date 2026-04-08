@@ -83,6 +83,8 @@ export class CampusGuard implements CanActivate {
     }
 
     try {
+      // Campus resolution happens before model-level tenant filters can safely
+      // infer scope, so this guard intentionally uses the unscoped client.
       const dbUser = await this.prisma.unscopedClient.user.findUnique({
         where: { id: user.userId },
         select: {

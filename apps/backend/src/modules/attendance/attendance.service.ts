@@ -16,6 +16,26 @@ export class AttendanceService {
     return this.teacherScopeService.getScope(teacherId, schoolId)
   }
 
+  private async validateTeacherAttendanceReadAccess(
+    teacherId: string,
+    schoolId: string,
+    sectionId: string,
+  ) {
+    const section = await this.prisma.section.findFirst({
+      where: { id: sectionId, schoolId },
+      select: { id: true, classId: true },
+    })
+
+    if (!section) {
+      throw new NotFoundException(`Section with ID "${sectionId}" not found`)
+    }
+
+    await this.teacherScopeService.validateClassTeacherAccess(teacherId, schoolId, section.classId)
+    await this.teacherScopeService.validateSectionAccess(teacherId, schoolId, sectionId)
+
+    return section
+  }
+
   async markAttendance(schoolId: string, dto: MarkAttendanceDto, teacherId?: string | null) {
     // Teacher validation: only class teachers can mark attendance
     if (teacherId) {
@@ -79,17 +99,27 @@ export class AttendanceService {
     // Teacher scope: only show attendance for assigned sections/classes
     if (teacherId) {
       const scope = await this.getTeacherScope(teacherId, schoolId)
-      if (scope.sectionIds.length > 0) {
-        where.sectionId = { in: scope.sectionIds }
-        // Teacher can further filter within their own scope
-        if (query.sectionId && scope.sectionIds.includes(query.sectionId)) {
-          where.sectionId = query.sectionId
-        }
-      } else if (scope.classIds.length > 0) {
-        where.student = { classId: { in: scope.classIds } }
-        if (query.sectionId) where.sectionId = query.sectionId
-      } else {
+      if (!scope.classTeacherOfId) {
         return new PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20)
+      }
+
+      const classTeacherSections = await this.prisma.section.findMany({
+        where: { schoolId, classId: scope.classTeacherOfId },
+        select: { id: true },
+      })
+      const allowedSectionIds = classTeacherSections.map((section) => section.id)
+
+      if (allowedSectionIds.length === 0) {
+        return new PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20)
+      }
+
+      where.sectionId = { in: allowedSectionIds }
+
+      if (query.sectionId) {
+        if (!allowedSectionIds.includes(query.sectionId)) {
+          return new PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20)
+        }
+        where.sectionId = query.sectionId
       }
     } else {
       if (query.sectionId) where.sectionId = query.sectionId
@@ -136,10 +166,8 @@ export class AttendanceService {
     // Teacher scope: can only view students in their assigned sections/classes
     if (teacherId) {
       const scope = await this.getTeacherScope(teacherId, schoolId)
-      const inSection = student.sectionId && scope.sectionIds.includes(student.sectionId)
-      const inClass = student.classId && scope.classIds.includes(student.classId)
-      if (!inSection && !inClass) {
-        throw new ForbiddenException('You are not assigned to this student\'s class or section')
+      if (!scope.classTeacherOfId || student.classId !== scope.classTeacherOfId) {
+        throw new ForbiddenException('Only the class teacher can view attendance for this student')
       }
     }
 
@@ -167,7 +195,7 @@ export class AttendanceService {
   async getReport(schoolId: string, sectionId: string, startDate: string, endDate: string, teacherId?: string | null) {
     // Teacher scope: can only view reports for assigned sections
     if (teacherId) {
-      await this.teacherScopeService.validateSectionAccess(teacherId, schoolId, sectionId)
+      await this.validateTeacherAttendanceReadAccess(teacherId, schoolId, sectionId)
     }
 
     const [students, attendances] = await Promise.all([
@@ -225,7 +253,7 @@ export class AttendanceService {
   async getSectionStudents(schoolId: string, sectionId: string, teacherId?: string | null) {
     // Teacher scope: can only view students in assigned sections
     if (teacherId) {
-      await this.teacherScopeService.validateSectionAccess(teacherId, schoolId, sectionId)
+      await this.validateTeacherAttendanceReadAccess(teacherId, schoolId, sectionId)
     }
 
     return this.prisma.student.findMany({

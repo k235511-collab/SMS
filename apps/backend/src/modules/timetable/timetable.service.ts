@@ -1,10 +1,39 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common'
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import { CreateTimetableSlotDto, UpdateTimetableSlotDto, CreatePeriodTemplateDto, UpdatePeriodTemplateDto } from './dto'
+import { TeacherScopeService } from '../teachers/teacher-scope.service'
 
 @Injectable()
 export class TimetableService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly teacherScope: TeacherScopeService,
+  ) { }
+
+  private async validateTeacherSectionReadAccess(
+    requesterTeacherId: string | null | undefined,
+    schoolId: string,
+    sectionId: string,
+  ) {
+    if (!requesterTeacherId) {
+      return
+    }
+
+    await this.teacherScope.validateSectionAccess(requesterTeacherId, schoolId, sectionId)
+  }
+
+  private validateTeacherScheduleReadAccess(
+    requesterTeacherId: string | null | undefined,
+    targetTeacherId: string,
+  ) {
+    if (!requesterTeacherId) {
+      return
+    }
+
+    if (requesterTeacherId !== targetTeacherId) {
+      throw new ForbiddenException('Teachers can only view their own timetable')
+    }
+  }
 
   private async resolveAcademicYearId(
     schoolId: string,
@@ -146,7 +175,9 @@ export class TimetableService {
     })
   }
 
-  async findBySection(sectionId: string, schoolId: string) {
+  async findBySection(sectionId: string, schoolId: string, requesterTeacherId?: string | null) {
+    await this.validateTeacherSectionReadAccess(requesterTeacherId, schoolId, sectionId)
+
     return this.prisma.timetableSlot.findMany({
       where: { sectionId, schoolId },
       include: {
@@ -157,7 +188,9 @@ export class TimetableService {
     })
   }
 
-  async findByTeacher(teacherId: string, schoolId: string) {
+  async findByTeacher(teacherId: string, schoolId: string, requesterTeacherId?: string | null) {
+    this.validateTeacherScheduleReadAccess(requesterTeacherId, teacherId)
+
     return this.prisma.timetableSlot.findMany({
       where: { teacherId, schoolId },
       include: {
@@ -269,7 +302,9 @@ export class TimetableService {
   /**
    * Returns a teacher's full weekly schedule with all slots and free periods.
    */
-  async getTeacherSchedule(teacherId: string, schoolId: string) {
+  async getTeacherSchedule(teacherId: string, schoolId: string, requesterTeacherId?: string | null) {
+    this.validateTeacherScheduleReadAccess(requesterTeacherId, teacherId)
+
     const teacher = await this.prisma.teacher.findFirst({
       where: { id: teacherId, schoolId },
       select: { id: true, firstName: true, lastName: true, employeeId: true },

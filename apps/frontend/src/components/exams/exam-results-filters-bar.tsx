@@ -4,6 +4,7 @@ import { Search, FilterX } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SelectEmptyItem, SelectLoadingItem } from '@/components/ui/select-state-items'
 
 interface OptionItem {
   id: string
@@ -19,6 +20,8 @@ interface ExamResultsFiltersBarProps {
   onSectionChange: (value: string) => void
   classes: OptionItem[]
   sections: OptionItem[]
+  classesLoading?: boolean
+  sectionsLoading?: boolean
   onReset: () => void
 }
 
@@ -32,6 +35,8 @@ export function ExamResultsFiltersBar(props: ExamResultsFiltersBarProps) {
     onSectionChange,
     classes,
     sections,
+    classesLoading = false,
+    sectionsLoading = false,
     onReset,
   } = props
 
@@ -47,27 +52,47 @@ export function ExamResultsFiltersBar(props: ExamResultsFiltersBarProps) {
         />
       </div>
 
-      <Select value={classId || 'all'} onValueChange={(value) => onClassChange(value === 'all' ? '' : value)}>
+      <Select
+        value={classId || 'all'}
+        onValueChange={(value) => onClassChange(value === 'all' ? '' : value)}
+        disabled={classesLoading}
+      >
         <SelectTrigger className="w-full md:w-44">
           <SelectValue placeholder="All Classes" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All Classes</SelectItem>
-          {classes.map((item) => (
-            <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
-          ))}
+          {classesLoading ? (
+            <SelectLoadingItem label="Loading classes..." />
+          ) : classes.length > 0 ? (
+            classes.map((item) => (
+              <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+            ))
+          ) : (
+            <SelectEmptyItem label="No classes available" />
+          )}
         </SelectContent>
       </Select>
 
-      <Select value={sectionId || 'all'} onValueChange={(value) => onSectionChange(value === 'all' ? '' : value)}>
+      <Select
+        value={sectionId || 'all'}
+        onValueChange={(value) => onSectionChange(value === 'all' ? '' : value)}
+        disabled={sectionsLoading}
+      >
         <SelectTrigger className="w-full md:w-44">
           <SelectValue placeholder="All Sections" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All Sections</SelectItem>
-          {sections.map((item) => (
-            <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
-          ))}
+          {sectionsLoading ? (
+            <SelectLoadingItem label="Loading sections..." />
+          ) : sections.length > 0 ? (
+            sections.map((item) => (
+              <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+            ))
+          ) : (
+            <SelectEmptyItem label="No sections available" />
+          )}
         </SelectContent>
       </Select>
 

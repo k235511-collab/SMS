@@ -18,6 +18,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Spinner } from '@/components/ui/spinner'
+import { SelectEmptyItem, SelectLoadingItem } from '@/components/ui/select-state-items'
 import { assignmentsService } from '@/services/assignments.service'
 import { academicsService } from '@/services/academics.service'
 import { teachersService } from '@/services/teachers.service'
@@ -39,6 +41,8 @@ export function AddAssignmentDialog({ onSuccess, assignment, trigger }: AddAssig
     const [open, setOpen] = useState(false)
     const isEdit = !!assignment
     const [loading, setLoading] = useState(false)
+    const [classesLoading, setClassesLoading] = useState(false)
+    const [subjectsLoading, setSubjectsLoading] = useState(false)
     const [classes, setClasses] = useState<any[]>([])
     const [subjects, setSubjects] = useState<any[]>([])
     const [teacherAssignments, setTeacherAssignments] = useState<any[]>([])
@@ -84,6 +88,7 @@ export function AddAssignmentDialog({ onSuccess, assignment, trigger }: AddAssig
         if (!open) return
 
         const fetchClasses = async () => {
+            setClassesLoading(true)
             try {
                 if (isTeacher) {
                     // Teacher: scope to assigned classes
@@ -110,6 +115,8 @@ export function AddAssignmentDialog({ onSuccess, assignment, trigger }: AddAssig
             } catch (error) {
                 console.error(error)
                 toast.error('Failed to load classes')
+            } finally {
+                setClassesLoading(false)
             }
         }
 
@@ -120,6 +127,7 @@ export function AddAssignmentDialog({ onSuccess, assignment, trigger }: AddAssig
         if (!open) return
 
         const fetchSubjects = async () => {
+            setSubjectsLoading(true)
             try {
                 if (!formData.classId) {
                     setSubjects([])
@@ -151,6 +159,8 @@ export function AddAssignmentDialog({ onSuccess, assignment, trigger }: AddAssig
             } catch (error) {
                 console.error(error)
                 toast.error('Failed to load subjects')
+            } finally {
+                setSubjectsLoading(false)
             }
         }
 
@@ -214,6 +224,12 @@ export function AddAssignmentDialog({ onSuccess, assignment, trigger }: AddAssig
                     <DialogTitle>{isEdit ? 'Edit Assignment' : 'Create New Assignment'}</DialogTitle>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="space-y-4 py-4">
+                    {(classesLoading || subjectsLoading) && (
+                        <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                            <Spinner size="sm" />
+                            <span>{classesLoading ? 'Loading classes...' : 'Loading subjects...'}</span>
+                        </div>
+                    )}
                     <div className="grid gap-2">
                         <Label htmlFor="title">Title *</Label>
                         <Input
@@ -228,28 +244,58 @@ export function AddAssignmentDialog({ onSuccess, assignment, trigger }: AddAssig
                     <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
                             <Label htmlFor="class">Class *</Label>
-                            <Select value={formData.classId} onValueChange={(v) => setFormData({ ...formData, classId: v, subjectId: '' })}>
+                            <Select
+                                value={formData.classId}
+                                onValueChange={(v) => setFormData({ ...formData, classId: v, subjectId: '' })}
+                                disabled={classesLoading}
+                            >
                                 <SelectTrigger>
                                     <SelectValue placeholder="Select Class" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {classes.map((c) => (
-                                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                                    ))}
+                                    {classesLoading ? (
+                                        <SelectLoadingItem label="Loading classes..." />
+                                    ) : classes.length > 0 ? (
+                                        classes.map((c) => (
+                                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                        ))
+                                    ) : (
+                                        <SelectEmptyItem label="No classes available" />
+                                    )}
                                 </SelectContent>
                             </Select>
                         </div>
 
                         <div className="grid gap-2">
                             <Label htmlFor="subject">Subject *</Label>
-                            <Select value={formData.subjectId} onValueChange={(v) => setFormData({ ...formData, subjectId: v })}>
+                            <Select
+                                value={formData.subjectId}
+                                onValueChange={(v) => setFormData({ ...formData, subjectId: v })}
+                                disabled={!formData.classId || subjectsLoading}
+                            >
                                 <SelectTrigger>
-                                    <SelectValue placeholder={formData.classId ? 'Select Subject' : 'Select Class first'} />
+                                    <SelectValue
+                                        placeholder={
+                                            !formData.classId
+                                                ? 'Select Class first'
+                                                : subjectsLoading
+                                                    ? 'Loading subjects...'
+                                                    : 'Select Subject'
+                                        }
+                                    />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {filteredSubjects.map((s) => (
-                                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                                    ))}
+                                    {!formData.classId ? (
+                                        <SelectEmptyItem label="Select a class first" />
+                                    ) : subjectsLoading ? (
+                                        <SelectLoadingItem label="Loading subjects..." />
+                                    ) : filteredSubjects.length > 0 ? (
+                                        filteredSubjects.map((s) => (
+                                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                        ))
+                                    ) : (
+                                        <SelectEmptyItem label="No subjects available" />
+                                    )}
                                 </SelectContent>
                             </Select>
                         </div>
@@ -308,7 +354,9 @@ export function AddAssignmentDialog({ onSuccess, assignment, trigger }: AddAssig
 
                     <div className="flex justify-end gap-2 pt-4">
                         <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-                        <Button type="submit" disabled={loading}>{loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update' : 'Create')}</Button>
+                        <Button type="submit" isLoading={loading}>
+                            {loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update' : 'Create')}
+                        </Button>
                     </div>
                 </form>
             </DialogContent>

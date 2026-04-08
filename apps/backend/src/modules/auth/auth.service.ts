@@ -106,7 +106,8 @@ export class AuthService {
       userQuery.schoolId = schoolId
     }
 
-    // Use unscopedClient to find user across schools if no specific schoolId
+    // Cross-school login intentionally bypasses tenant scoping so the same email
+    // can be resolved before we know which school context the user belongs to.
     const user = await this.prisma.unscopedClient.user.findFirst({
       where: userQuery,
       include: {
@@ -201,6 +202,8 @@ export class AuthService {
         userQuery.schoolId = schoolId
       }
 
+      // Google sign-in also needs cross-tenant lookup before the tenant context
+      // is finalized, so this path intentionally uses the unscoped client.
       const user = await this.prisma.unscopedClient.user.findFirst({
         where: userQuery,
         include: {

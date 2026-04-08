@@ -14,6 +14,10 @@ export class AssignmentsService {
         return this.teacherScope.getScope(teacherId, schoolId)
     }
 
+    private async getTeacherAssignmentAccessConditions(teacherId: string, schoolId: string) {
+        return this.teacherScope.getAssignmentAccessConditions(teacherId, schoolId)
+    }
+
     async create(schoolId: string, dto: CreateAssignmentDto, teacherId?: string | null) {
         if (teacherId) {
             // Prevent spoofing: always use JWT teacherId, ignore dto.teacherId
@@ -33,13 +37,19 @@ export class AssignmentsService {
         const where: any = { schoolId }
 
         if (teacherId) {
-            const scope = await this.getTeacherScope(teacherId, schoolId)
-            if (scope.classIds.length === 0) return { data: [], total: 0, page: query.page ?? 1, pageSize: query.pageSize ?? 20, totalPages: 0 }
-            where.classId = { in: scope.classIds }
+            const conditions = await this.getTeacherAssignmentAccessConditions(teacherId, schoolId)
+            if (conditions.length === 0) {
+                return { data: [], total: 0, page: query.page ?? 1, pageSize: query.pageSize ?? 20, totalPages: 0 }
+            }
+            where.AND = [{ OR: conditions }]
         }
 
-        if (query.classId) where.classId = query.classId
-        if (query.subjectId) where.subjectId = query.subjectId
+        if (query.classId) {
+            where.AND = [...(where.AND || []), { classId: query.classId }]
+        }
+        if (query.subjectId) {
+            where.AND = [...(where.AND || []), { subjectId: query.subjectId }]
+        }
         if (campusId) where.class = { ...where.class, campusId }
 
         const page = query.page ?? 1
@@ -59,17 +69,25 @@ export class AssignmentsService {
         return { data, total, page, pageSize, totalPages: Math.ceil(total / pageSize) }
     }
 
-    async findById(id: string, schoolId: string) {
+    async findById(id: string, schoolId: string, teacherId?: string | null) {
         const assignment = await this.prisma.assignment.findFirst({
             where: { id, schoolId },
             include: { class: true, subject: true, teacher: true, submissions: { include: { student: true } } },
         })
         if (!assignment) throw new NotFoundException(`Assignment "${id}" not found`)
+
+        if (teacherId) {
+            await this.teacherScope.validateFullAccess(teacherId, schoolId, {
+                classId: assignment.classId,
+                subjectId: assignment.subjectId,
+            })
+        }
+
         return assignment
     }
 
     async update(id: string, schoolId: string, dto: UpdateAssignmentDto, teacherId?: string | null) {
-        const assignment = await this.findById(id, schoolId)
+        const assignment = await this.findById(id, schoolId, teacherId)
 
         // Teacher scope: can only update their own assignments
         if (teacherId) {
@@ -88,7 +106,7 @@ export class AssignmentsService {
     }
 
     async remove(id: string, schoolId: string, teacherId?: string | null) {
-        const assignment = await this.findById(id, schoolId)
+        const assignment = await this.findById(id, schoolId, teacherId)
 
         // Teacher scope: can only delete their own assignments + validate scope
         if (teacherId) {

@@ -12,6 +12,7 @@ export class HealthController {
   @Get()
   async check() {
     try {
+      // Intentional raw probe: the health check only needs a lightweight DB ping.
       await this.prisma.$queryRaw`SELECT 1`
       return { 
         status: 'ok', 

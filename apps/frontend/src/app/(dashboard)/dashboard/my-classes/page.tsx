@@ -10,6 +10,7 @@ import { teachersService } from '@/services/teachers.service'
 import { useAuth } from '@/context/auth-context'
 import { Users, BookOpen, GraduationCap, ClipboardCheck, ShieldCheck } from 'lucide-react'
 import Link from 'next/link'
+import { useMemo } from 'react'
 
 interface ClassAssignment {
   id: string
@@ -27,6 +28,13 @@ export default function MyClassesPage() {
   const [assignments, setAssignments] = useState<ClassAssignment[]>([])
   const [classTeacherOfId, setClassTeacherOfId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const assignmentCount = assignments.length
+  const uniqueClassCount = useMemo(() => {
+    const keys = new Set(
+      assignments.map((assignment) => `${assignment.classId}:${assignment.section?.id ?? 'all'}`),
+    )
+    return keys.size
+  }, [assignments])
 
   // Redirect non-teachers
   useEffect(() => {
@@ -58,10 +66,12 @@ export default function MyClassesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">My Classes</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Classes assigned to you this academic year.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {assignmentCount} teaching assignment{assignmentCount !== 1 ? 's' : ''} across {uniqueClassCount} class{uniqueClassCount !== 1 ? 'es' : ''} this academic year.
+          </p>
         </div>
         <Badge variant="secondary" className="text-sm">
-          {assignments.length} Class{assignments.length !== 1 ? 'es' : ''}
+          {assignmentCount} Assignment{assignmentCount !== 1 ? 's' : ''}
         </Badge>
       </div>
 

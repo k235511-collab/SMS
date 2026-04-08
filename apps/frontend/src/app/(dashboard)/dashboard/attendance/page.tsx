@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { ProtectedRoute } from '@/components/auth'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
+import { SelectEmptyItem, SelectLoadingItem } from '@/components/ui/select-state-items'
 import { api } from '@/lib/api-client'
 import { ChevronLeft, ChevronRight, UserCheck, Clock, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -31,6 +33,8 @@ export default function AttendancePage() {
   const [classes, setClasses] = useState<ClassItem[]>([])
   const [sections, setSections] = useState<Section[]>([])
   const [teacherAssignments, setTeacherAssignments] = useState<any[]>([])
+  const [referencesLoading, setReferencesLoading] = useState(true)
+  const [sectionsLoading, setSectionsLoading] = useState(false)
   const [selectedClassId, setSelectedClassId] = useState(() => {
     if (typeof window !== 'undefined') return localStorage.getItem('attendance_selectedClassId') || ''
     return ''
@@ -99,59 +103,71 @@ export default function AttendancePage() {
   }, [startOfWeek])
 
   const fetchClasses = useCallback(async () => {
-    if (isTeacher) {
-      // Only show classes where the teacher is class teacher
-      const [assignmentsRes, profileRes] = await Promise.all([
-        teachersService.getMyClasses(),
-        teachersService.getMyProfile(),
-      ])
-      const classTeacherOfId = profileRes.success && profileRes.data ? profileRes.data.classTeacherOfId : null
-      if (assignmentsRes.success && assignmentsRes.data) {
-        const assignments = Array.isArray(assignmentsRes.data) ? assignmentsRes.data : (assignmentsRes.data as any).data || []
-        // Filter to only class-teacher assignments
-        const classTeacherAssignments = classTeacherOfId
-          ? assignments.filter((a: any) => a.classId === classTeacherOfId || a.class?.id === classTeacherOfId)
-          : []
-        setTeacherAssignments(classTeacherAssignments)
-        const classMap = new Map<string, ClassItem>()
-        for (const a of classTeacherAssignments) {
-          if (a.class) classMap.set(a.class.id, { id: a.class.id, name: a.class.name, code: a.class.code || '' })
+    setReferencesLoading(true)
+    try {
+      if (isTeacher) {
+        // Only show classes where the teacher is class teacher
+        const [assignmentsRes, profileRes] = await Promise.all([
+          teachersService.getMyClasses(),
+          teachersService.getMyProfile(),
+        ])
+        const classTeacherOfId = profileRes.success && profileRes.data ? profileRes.data.classTeacherOfId : null
+        if (assignmentsRes.success && assignmentsRes.data) {
+          const assignments = Array.isArray(assignmentsRes.data) ? assignmentsRes.data : (assignmentsRes.data as any).data || []
+          // Filter to only class-teacher assignments
+          const classTeacherAssignments = classTeacherOfId
+            ? assignments.filter((a: any) => a.classId === classTeacherOfId || a.class?.id === classTeacherOfId)
+            : []
+          setTeacherAssignments(classTeacherAssignments)
+          const classMap = new Map<string, ClassItem>()
+          for (const a of classTeacherAssignments) {
+            if (a.class) classMap.set(a.class.id, { id: a.class.id, name: a.class.name, code: a.class.code || '' })
+          }
+          setClasses(Array.from(classMap.values()))
         }
-        setClasses(Array.from(classMap.values()))
+      } else {
+        const res = await api.get<{ data: ClassItem[] }>('/academics/classes', { params: { pageSize: 100 } })
+        if (res.success && res.data) setClasses(res.data.data || [])
       }
-    } else {
-      const res = await api.get<{ data: ClassItem[] }>('/academics/classes', { params: { pageSize: 100 } })
-      if (res.success && res.data) setClasses(res.data.data || [])
+    } finally {
+      setReferencesLoading(false)
     }
   }, [selectedCampus, isTeacher])
 
   const fetchSections = useCallback(async (classId: string) => {
-    if (!classId) { setSections([]); return }
-    if (isTeacher) {
-      // Check if teacher has specific section assignments for this class
-      const filtered = teacherAssignments
-        .filter((a: any) => a.class?.id === classId && a.section)
-        .map((a: any) => ({ id: a.section.id, name: a.section.name, classId }))
-      const seen = new Set<string>()
-      const unique: Section[] = []
-      for (const s of filtered) {
-        if (!seen.has(s.id)) { seen.add(s.id); unique.push(s) }
-      }
-      if (unique.length > 0) {
-        setSections(unique)
-      } else {
-        // Whole-class assignment (no specific sections) → fetch all sections from API
-        const hasClassAssignment = teacherAssignments.some((a: any) => a.class?.id === classId)
-        if (hasClassAssignment) {
-          const res = await api.get<Section[]>(`/academics/sections/class/${classId}`)
-          if (res.success && res.data) setSections(Array.isArray(res.data) ? res.data : [])
-        } else {
-          setSections([])
+    if (!classId) { setSections([]); setSectionsLoading(false); return }
+    setSectionsLoading(true)
+    try {
+      if (isTeacher) {
+        // Check if teacher has specific section assignments for this class
+        const filtered = teacherAssignments
+          .filter((a: any) => a.class?.id === classId && a.section)
+          .map((a: any) => ({ id: a.section.id, name: a.section.name, classId }))
+        const seen = new Set<string>()
+        const unique: Section[] = []
+        for (const s of filtered) {
+          if (!seen.has(s.id)) { seen.add(s.id); unique.push(s) }
         }
+        if (unique.length > 0) {
+          setSections(unique)
+        } else {
+          // Whole-class assignment (no specific sections) → fetch all sections from API
+          const hasClassAssignment = teacherAssignments.some((a: any) => a.class?.id === classId)
+          if (hasClassAssignment) {
+            const res = await api.get<Section[]>(`/academics/sections/class/${classId}`)
+            if (res.success && res.data) setSections(Array.isArray(res.data) ? res.data : [])
+            else setSections([])
+          } else {
+            setSections([])
+          }
+        }
+      } else {
+        const res = await api.get<Section[]>(`/academics/sections/class/${classId}`)
+        if (res.success && res.data) setSections(Array.isArray(res.data) ? res.data : [])
+        else setSections([])
       }
-    } else {
-      const res = await api.get<Section[]>(`/academics/sections/class/${classId}`)
-      if (res.success && res.data) setSections(Array.isArray(res.data) ? res.data : [])
+    } finally {
+      setSectionsLoading(false)
     }
   }, [isTeacher, teacherAssignments])
 
@@ -426,13 +442,31 @@ export default function AttendancePage() {
 
         {/* Filters & Actions */}
         <div className="flex flex-wrap items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-sm">
-          <Select value={selectedClassId} onValueChange={(v) => { setSelectedClassId(v); setSelectedSectionId('') }}>
-            <SelectTrigger className="w-40 h-10 rounded-md"><SelectValue placeholder="Grade" /></SelectTrigger>
-            <SelectContent>{classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+          <Select value={selectedClassId} onValueChange={(v) => { setSelectedClassId(v); setSelectedSectionId('') }} disabled={referencesLoading}>
+            <SelectTrigger className="w-40 h-10 rounded-md"><SelectValue placeholder={referencesLoading ? 'Loading...' : 'Grade'} /></SelectTrigger>
+            <SelectContent>
+              {referencesLoading ? (
+                <SelectLoadingItem label="Loading classes..." />
+              ) : classes.length > 0 ? (
+                classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)
+              ) : (
+                <SelectEmptyItem label="No classes available" />
+              )}
+            </SelectContent>
           </Select>
-          <Select value={selectedSectionId} onValueChange={setSelectedSectionId} disabled={!selectedClassId}>
-            <SelectTrigger className="w-40 h-10 rounded-md"><SelectValue placeholder="Section" /></SelectTrigger>
-            <SelectContent>{sections.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+          <Select value={selectedSectionId} onValueChange={setSelectedSectionId} disabled={!selectedClassId || sectionsLoading}>
+            <SelectTrigger className="w-40 h-10 rounded-md"><SelectValue placeholder={sectionsLoading ? 'Loading...' : 'Section'} /></SelectTrigger>
+            <SelectContent>
+              {!selectedClassId ? (
+                <SelectEmptyItem label="Select a class first" />
+              ) : sectionsLoading ? (
+                <SelectLoadingItem label="Loading sections..." />
+              ) : sections.length > 0 ? (
+                sections.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)
+              ) : (
+                <SelectEmptyItem label="No sections available" />
+              )}
+            </SelectContent>
           </Select>
           <div className="h-6 w-[1px] bg-slate-200" />
           <div className="flex items-center gap-3">
@@ -444,6 +478,12 @@ export default function AttendancePage() {
                 return end.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })
               })()}
             </div>
+            {loading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Spinner size="sm" />
+                <span>Loading attendance...</span>
+              </div>
+            )}
             <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => navigateWeek('next')} aria-label="Next week"><ChevronRight className="h-4 w-4" /></Button>
           </div>
           {selectedSectionId && (

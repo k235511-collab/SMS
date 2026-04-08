@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogC
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { api } from '@/lib/api-client'
-import { Plus, Search, MoreHorizontal, Pencil, Trash2, Mail, Phone, Loader2, KeyRound } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Pencil, Trash2, Mail, Phone, Loader2, KeyRound, Copy, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { CampusBadge } from '@/components/campus-badge'
 import { cn } from '@/lib/utils'
@@ -40,6 +40,7 @@ export default function UsersPage() {
   const [resetting, setResetting] = useState<User | null>(null)
   const [resettingLoading, setResettingLoading] = useState(false)
   const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null)
+  const [copiedTemporaryPassword, setCopiedTemporaryPassword] = useState(false)
   const { campuses, selectedCampus, isCampusLocked } = useSession()
 
   const [form, setForm] = useState({ email: '', password: '', firstName: '', lastName: '', phone: '', roleId: '', gender: '', dateOfBirth: '', bloodGroup: '', address: '', cnic: '', profession: '', qualification: '', campusId: '' })
@@ -90,6 +91,7 @@ export default function UsersPage() {
     if (!resetting) return
     setResettingLoading(true)
     setTemporaryPassword(null)
+    setCopiedTemporaryPassword(false)
     try {
       const res = await api.post<{ temporaryPassword: string }>(`/users/${resetting.id}/reset-password`)
       if (res.success && res.data?.temporaryPassword) {
@@ -100,6 +102,19 @@ export default function UsersPage() {
       }
     } finally {
       setResettingLoading(false)
+    }
+  }
+
+  const handleCopyTemporaryPassword = async () => {
+    if (!temporaryPassword) return
+
+    try {
+      await navigator.clipboard.writeText(temporaryPassword)
+      setCopiedTemporaryPassword(true)
+      toast.success('Temporary password copied')
+      window.setTimeout(() => setCopiedTemporaryPassword(false), 2000)
+    } catch {
+      toast.error('Failed to copy temporary password')
     }
   }
 
@@ -356,6 +371,7 @@ export default function UsersPage() {
           if (!open) {
             setResetting(null)
             setTemporaryPassword(null)
+            setCopiedTemporaryPassword(false)
           }
         }}
       >
@@ -371,8 +387,31 @@ export default function UsersPage() {
             </p>
             {temporaryPassword ? (
               <div className="rounded-md border bg-muted/30 p-3">
-                <div className="text-xs text-muted-foreground">Temporary password</div>
-                <div className="mt-1 font-mono text-base break-all">{temporaryPassword}</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs text-muted-foreground">Temporary password</div>
+                    <div className="mt-1 font-mono text-base break-all">{temporaryPassword}</div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={handleCopyTemporaryPassword}
+                  >
+                    {copiedTemporaryPassword ? (
+                      <>
+                        <Check className="mr-2 h-4 w-4" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-2 h-4 w-4" />
+                        Copy
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="rounded-md border bg-muted/30 p-3 text-muted-foreground">

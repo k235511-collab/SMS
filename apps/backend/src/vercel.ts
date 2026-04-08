@@ -3,8 +3,10 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import compression from 'compression';
+import { validateDatabaseUrlsForServerless } from './config/database-url.utils';
 
 // Use require for express to avoid pnpm resolution issues
 const express = require('express');
@@ -28,14 +30,29 @@ async function bootstrap() {
             new ExpressAdapter(expressApp),
             { logger: ['error', 'warn', 'log'] }
         );
+        const configService = app.get(ConfigService);
+        const dbValidation = validateDatabaseUrlsForServerless(
+            process.env.DATABASE_URL,
+            process.env.DIRECT_DATABASE_URL,
+        )
 
-        // Apply the exact same middlewares from main.ts
-        const allowedOrigins = parseCorsOrigins(process.env.CORS_ORIGINS)
+        for (const warning of dbValidation.warnings) {
+            logger.warn(`[database-config] ${warning}`)
+        }
+
+        // Keep serverless bootstrap behavior aligned with main.ts.
+        const allowedOrigins = parseCorsOrigins(
+            configService.get<string>('CORS_ORIGINS', 'http://localhost:3000'),
+        )
+        const isDev = configService.get<string>('NODE_ENV', 'development') === 'development'
         logger.log(`CORS origins: ${allowedOrigins.length ? allowedOrigins.join(', ') : '(none)'}`)
         app.enableCors({
             origin: (origin: string | undefined, cb: (err: any, allow?: boolean) => void) => {
                 if (!origin) return cb(null, true)
                 const normalized = origin.endsWith('/') ? origin.slice(0, -1) : origin
+                if (isDev && (normalized.includes('localhost') || normalized.includes('127.0.0.1'))) {
+                    return cb(null, true)
+                }
                 return cb(null, allowedOrigins.includes(normalized))
             },
             credentials: true,
@@ -51,7 +68,10 @@ async function bootstrap() {
 
         app.use(compression());
 
-        app.setGlobalPrefix(process.env.API_PREFIX || '/api/v1', { exclude: ['health'] });
+        app.setGlobalPrefix(
+            configService.get<string>('API_PREFIX', 'api/v1'),
+            { exclude: ['health'] },
+        );
 
         app.useGlobalPipes(
             new ValidationPipe({

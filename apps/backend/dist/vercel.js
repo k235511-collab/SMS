@@ -140156,10 +140156,16 @@ let GlobalExceptionFilter = GlobalExceptionFilter_1 = class GlobalExceptionFilte
                     errors = { validation: validationErrors };
                 }
             }
+            // Never leak internal 5xx exception details to clients.
+            if (status >= 500) {
+                message = 'Something went wrong. Please try again later.';
+                errors = undefined;
+            }
         }
         else if (exception instanceof Error) {
-            message = exception.message;
             this.logger.error(`Unhandled exception: ${exception.message}`, exception.stack);
+            // Hide raw runtime/DB error details from API consumers.
+            message = 'Something went wrong. Please try again later.';
         }
         const errorResponse = {
             success: false,
@@ -140279,6 +140285,8 @@ let CampusGuard = CampusGuard_1 = class CampusGuard {
             return request.__userCampusId;
         }
         try {
+            // Campus resolution happens before model-level tenant filters can safely
+            // infer scope, so this guard intentionally uses the unscoped client.
             const dbUser = await this.prisma.unscopedClient.user.findUnique({
                 where: { id: user.userId },
                 select: {
@@ -140752,6 +140760,7 @@ exports.TenantMiddleware = TenantMiddleware = __decorate([
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.supabaseConfig = exports.jwtConfig = exports.databaseConfig = exports.appConfig = void 0;
+const config_1 = __webpack_require__(25425);
 const register_as_1 = __webpack_require__(80976);
 exports.appConfig = (0, register_as_1.registerAs)('app', {
     nodeEnv: { env: 'NODE_ENV', default: 'development' },
@@ -140770,12 +140779,95 @@ exports.jwtConfig = (0, register_as_1.registerAs)('jwt', {
     refreshSecret: { env: 'JWT_REFRESH_SECRET', required: true },
     refreshExpiration: { env: 'JWT_REFRESH_EXPIRATION', default: '7d' },
 });
-exports.supabaseConfig = (0, register_as_1.registerAs)('supabase', {
-    url: { env: 'NEXT_PUBLIC_SUPABASE_URL', required: true },
-    key: { env: 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY', required: true },
-    bucket: { env: 'SUPABASE_BUCKET', default: 'uploads' },
-    serviceRoleKey: { env: 'SUPABASE_SERVICE_ROLE_KEY' },
+exports.supabaseConfig = (0, config_1.registerAs)('supabase', () => {
+    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.SUPABASE_PUBLISHABLE_DEFAULT_KEY ||
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY;
+    const bucket = process.env.SUPABASE_BUCKET || 'uploads';
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const missing = [];
+    if (!url)
+        missing.push('SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL');
+    if (!key) {
+        missing.push('SUPABASE_PUBLISHABLE_DEFAULT_KEY or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY');
+    }
+    if (missing.length > 0) {
+        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    }
+    return {
+        url,
+        key,
+        bucket,
+        serviceRoleKey,
+    };
 });
+
+
+/***/ },
+
+/***/ 91400
+(__unused_webpack_module, exports) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.validateDatabaseUrlsForServerless = validateDatabaseUrlsForServerless;
+function safeParseUrl(value) {
+    if (!value)
+        return null;
+    try {
+        return new URL(value);
+    }
+    catch {
+        return null;
+    }
+}
+function isSupabasePooler(url) {
+    return url?.hostname.includes('pooler.supabase.com') ?? false;
+}
+function isSupabaseTransactionPooler(url) {
+    return isSupabasePooler(url) && url?.port === '6543';
+}
+function isSupabaseSessionPooler(url) {
+    return isSupabasePooler(url) && (url?.port === '5432' || url?.port === '');
+}
+function validateDatabaseUrlsForServerless(databaseUrl, directDatabaseUrl) {
+    const warnings = [];
+    const database = safeParseUrl(databaseUrl);
+    const direct = safeParseUrl(directDatabaseUrl);
+    if (!databaseUrl) {
+        warnings.push('DATABASE_URL is missing.');
+        return { warnings };
+    }
+    if (!database) {
+        warnings.push('DATABASE_URL is not a valid URL.');
+        return { warnings };
+    }
+    if (!directDatabaseUrl) {
+        warnings.push('DIRECT_DATABASE_URL is missing. Prisma migrations and direct connections should use the direct database host.');
+    }
+    else if (!direct) {
+        warnings.push('DIRECT_DATABASE_URL is not a valid URL.');
+    }
+    if (isSupabaseTransactionPooler(database)) {
+        if (database.searchParams.get('pgbouncer') !== 'true') {
+            warnings.push('Supabase transaction pooler URLs on port 6543 should include pgbouncer=true for Prisma serverless usage.');
+        }
+    }
+    if (isSupabaseSessionPooler(database)) {
+        warnings.push('Supabase session pooler URLs on port 5432 are not the recommended serverless connection for Vercel. Prefer the transaction pooler on port 6543 for DATABASE_URL.');
+    }
+    if (databaseUrl &&
+        directDatabaseUrl &&
+        databaseUrl === directDatabaseUrl &&
+        isSupabasePooler(database)) {
+        warnings.push('DATABASE_URL and DIRECT_DATABASE_URL should not be identical when using a Supabase pooler. Use the pooler for DATABASE_URL and the direct database host for DIRECT_DATABASE_URL.');
+    }
+    if (direct && isSupabasePooler(direct)) {
+        warnings.push('DIRECT_DATABASE_URL should point to the direct database host, not a Supabase pooler URL.');
+    }
+    return { warnings };
+}
 
 
 /***/ },
@@ -143989,6 +144081,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AuthController = void 0;
 const common_1 = __webpack_require__(47305);
 const swagger_1 = __webpack_require__(58315);
+const throttler_1 = __webpack_require__(20282);
 const auth_service_1 = __webpack_require__(30695);
 const dto_1 = __webpack_require__(17464);
 const decorators_1 = __webpack_require__(69270);
@@ -144048,6 +144141,8 @@ let AuthController = class AuthController {
 exports.AuthController = AuthController;
 __decorate([
     (0, decorators_1.Public)(),
+    (0, common_1.UseGuards)(throttler_1.ThrottlerGuard),
+    (0, throttler_1.Throttle)({ default: { limit: 5, ttl: 60_000 } }),
     (0, common_1.Post)('login'),
     (0, common_1.HttpCode)(common_1.HttpStatus.OK),
     (0, swagger_1.ApiOperation)({ summary: 'Login with email, password and school slug' }),
@@ -144060,6 +144155,8 @@ __decorate([
 ], AuthController.prototype, "login", null);
 __decorate([
     (0, decorators_1.Public)(),
+    (0, common_1.UseGuards)(throttler_1.ThrottlerGuard),
+    (0, throttler_1.Throttle)({ default: { limit: 3, ttl: 60_000 } }),
     (0, common_1.Post)('register'),
     (0, swagger_1.ApiOperation)({ summary: 'Register a new user in a school' }),
     (0, swagger_1.ApiResponse)({ status: 201, description: 'Registration successful' }),
@@ -144071,6 +144168,8 @@ __decorate([
 ], AuthController.prototype, "register", null);
 __decorate([
     (0, decorators_1.Public)(),
+    (0, common_1.UseGuards)(throttler_1.ThrottlerGuard),
+    (0, throttler_1.Throttle)({ default: { limit: 5, ttl: 60_000 } }),
     (0, common_1.Post)('refresh'),
     (0, common_1.HttpCode)(common_1.HttpStatus.OK),
     (0, swagger_1.ApiOperation)({ summary: 'Refresh access token' }),
@@ -144093,6 +144192,8 @@ __decorate([
 ], AuthController.prototype, "getMe", null);
 __decorate([
     (0, decorators_1.Public)(),
+    (0, common_1.UseGuards)(throttler_1.ThrottlerGuard),
+    (0, throttler_1.Throttle)({ default: { limit: 5, ttl: 60_000 } }),
     (0, common_1.Post)('google'),
     (0, common_1.HttpCode)(common_1.HttpStatus.OK),
     (0, swagger_1.ApiOperation)({ summary: 'Login with Google OAuth' }),
@@ -144151,8 +144252,12 @@ __decorate([
 ], AuthController.prototype, "changePassword", null);
 __decorate([
     (0, decorators_1.Public)(),
+    (0, common_1.UseGuards)(throttler_1.ThrottlerGuard),
+    (0, throttler_1.Throttle)({ default: { limit: 2, ttl: 60_000 } }),
     (0, common_1.Post)('register-school'),
-    (0, swagger_1.ApiOperation)({ summary: 'Submit a school registration request (public, requires admin approval)' }),
+    (0, swagger_1.ApiOperation)({
+        summary: 'Submit a school registration request (public, requires admin approval)',
+    }),
     (0, swagger_1.ApiResponse)({ status: 201, description: 'Registration submitted for review' }),
     (0, swagger_1.ApiResponse)({ status: 409, description: 'Duplicate registration' }),
     __param(0, (0, common_1.Body)()),
@@ -144296,9 +144401,11 @@ let AuthService = class AuthService {
                     where: { id: admin.id },
                     data: { lastLoginAt: new Date() },
                 });
-                await this.prisma.loginHistory.create({
+                await this.prisma.loginHistory
+                    .create({
                     data: { email, success: true, userType: 'platform_admin', userId: admin.id },
-                }).catch(() => { });
+                })
+                    .catch(() => { });
                 const tokens = this.generateTokens({
                     sub: admin.id,
                     isPlatformAdmin: true,
@@ -144330,7 +144437,8 @@ let AuthService = class AuthService {
         if (schoolId) {
             userQuery.schoolId = schoolId;
         }
-        // Use unscopedClient to find user across schools if no specific schoolId
+        // Cross-school login intentionally bypasses tenant scoping so the same email
+        // can be resolved before we know which school context the user belongs to.
         const user = await this.prisma.unscopedClient.user.findFirst({
             where: userQuery,
             include: {
@@ -144382,6 +144490,7 @@ let AuthService = class AuthService {
                 campusName: user.campus?.name || null,
                 teacherId,
                 classTeacherOfId,
+                mustChangePassword: user.mustChangePassword ?? false,
             },
         };
     }
@@ -144411,6 +144520,8 @@ let AuthService = class AuthService {
             if (schoolId) {
                 userQuery.schoolId = schoolId;
             }
+            // Google sign-in also needs cross-tenant lookup before the tenant context
+            // is finalized, so this path intentionally uses the unscoped client.
             const user = await this.prisma.unscopedClient.user.findFirst({
                 where: userQuery,
                 include: {
@@ -144461,15 +144572,18 @@ let AuthService = class AuthService {
                     campusName: user.campus?.name || null,
                     teacherId,
                     classTeacherOfId,
+                    mustChangePassword: user.mustChangePassword ?? false,
                 },
             };
         }
         catch (error) {
-            if (error?.name === 'UnauthorizedException' || typeof error?.getStatus === 'function' || error?.response?.statusCode === 401) {
+            if (error?.name === 'UnauthorizedException' ||
+                typeof error?.getStatus === 'function' ||
+                error?.response?.statusCode === 401) {
                 throw error;
             }
             console.error('Google Sign-In Error:', error);
-            throw new common_1.UnauthorizedException('Sign-in failed: ' + (error?.message || 'Unknown error'));
+            throw new common_1.UnauthorizedException('Google sign-in failed. Please try again.');
         }
     }
     async register(email, password, firstName, lastName, schoolSlug, roleSlug) {
@@ -144559,7 +144673,10 @@ let AuthService = class AuthService {
             // Tenant user refresh — use unscoped lookup to avoid missing tenant-context issues
             const user = await this.prisma.unscopedClient.user.findUnique({
                 where: { id: payload.sub },
-                include: { role: { select: { slug: true } }, teacher: { select: { id: true, classTeacherOfId: true } } },
+                include: {
+                    role: { select: { slug: true } },
+                    teacher: { select: { id: true, classTeacherOfId: true } },
+                },
             });
             if (!user || !user.isActive) {
                 throw new common_1.UnauthorizedException('User not found or deactivated');
@@ -144618,6 +144735,7 @@ let AuthService = class AuthService {
                 isActive: true,
                 schoolId: true,
                 campusId: true,
+                mustChangePassword: true,
                 school: { select: { id: true, name: true, slug: true, logo: true, settings: true } },
                 role: { select: { id: true, name: true, slug: true } },
                 campus: { select: { id: true, name: true, code: true } },
@@ -144650,6 +144768,7 @@ let AuthService = class AuthService {
             campusName: user.campus?.name || null,
             teacherId: user.teacher?.id || null,
             classTeacherOfId: user.teacher?.classTeacherOfId || null,
+            mustChangePassword: user.mustChangePassword ?? false,
         };
     }
     /**
@@ -144742,6 +144861,7 @@ let AuthService = class AuthService {
                 avatar: targetUser.avatar,
                 teacherId: targetUser.teacher?.id || null,
                 classTeacherOfId: targetUser.teacher?.classTeacherOfId || null,
+                mustChangePassword: targetUser.mustChangePassword ?? false,
             },
         };
     }
@@ -144769,7 +144889,10 @@ let AuthService = class AuthService {
             if (!isValid)
                 throw new common_1.UnauthorizedException('Current password is incorrect');
             const newHash = await bcrypt.hash(newPassword, 10);
-            await this.prisma.platformAdmin.update({ where: { id: userId }, data: { passwordHash: newHash } });
+            await this.prisma.platformAdmin.update({
+                where: { id: userId },
+                data: { passwordHash: newHash },
+            });
         }
         else {
             const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -144782,7 +144905,10 @@ let AuthService = class AuthService {
             if (!isValid)
                 throw new common_1.UnauthorizedException('Current password is incorrect');
             const newHash = await bcrypt.hash(newPassword, 10);
-            await this.prisma.user.update({ where: { id: userId }, data: { passwordHash: newHash } });
+            await this.prisma.user.update({
+                where: { id: userId },
+                data: { passwordHash: newHash, mustChangePassword: false },
+            });
         }
         return { message: 'Password changed successfully' };
     }
@@ -145996,9 +146122,9 @@ let EmailService = EmailService_1 = class EmailService {
             // Mock email sending (Nodemailer not installed yet)
             // In production, uncomment and install nodemailer
             /*
-            const transporter = nodemailer.createTransport({ ... });
-            await transporter.sendMail({ ... });
-            */
+                  const transporter = nodemailer.createTransport({ ... });
+                  await transporter.sendMail({ ... });
+                  */
             this.logger.log(`[MOCK] Email sent successfully to ${dto.to}`);
             const log = await this.prisma.communicationLog.create({
                 data: {
@@ -150424,6 +150550,7 @@ exports.FinanceService = void 0;
 const common_1 = __webpack_require__(47305);
 const prisma_service_1 = __webpack_require__(29105);
 const dto_1 = __webpack_require__(70549);
+const finance_utils_1 = __webpack_require__(76543);
 let FinanceService = class FinanceService {
     prisma;
     constructor(prisma) {
@@ -150517,29 +150644,13 @@ let FinanceService = class FinanceService {
             where: { schoolId, isCurrent: true },
             select: { id: true },
         });
-        let discountFields = {
-            grossAmount: dto.totalAmount,
-            discountType: null,
-            discountValue: null,
-            discountAmount: 0,
-            totalAmount: dto.totalAmount,
-        };
+        let discountFields = (0, finance_utils_1.calculateInvoiceDiscountFields)(dto.totalAmount);
         if (currentYear) {
             const enrollment = await this.prisma.studentEnrollment.findUnique({
                 where: { studentId_academicYearId: { studentId: dto.studentId, academicYearId: currentYear.id } },
                 select: { discountType: true, discountValue: true },
             });
-            if (enrollment?.discountType && enrollment?.discountValue && enrollment.discountValue > 0) {
-                const feeAmount = dto.totalAmount;
-                if (enrollment.discountType === 'PERCENTAGE') {
-                    const disc = Math.round(feeAmount * Math.min(enrollment.discountValue, 100) / 100);
-                    discountFields = { grossAmount: feeAmount, discountType: enrollment.discountType, discountValue: enrollment.discountValue, discountAmount: disc, totalAmount: feeAmount - disc };
-                }
-                else {
-                    const disc = Math.min(enrollment.discountValue, feeAmount);
-                    discountFields = { grossAmount: feeAmount, discountType: enrollment.discountType, discountValue: enrollment.discountValue, discountAmount: disc, totalAmount: feeAmount - disc };
-                }
-            }
+            discountFields = (0, finance_utils_1.calculateInvoiceDiscountFields)(dto.totalAmount, enrollment);
         }
         return this.prisma.invoice.create({
             data: {
@@ -150674,11 +150785,7 @@ let FinanceService = class FinanceService {
             const invoicePaid = Number(payment.invoice.paidAmount);
             const paymentAmount = Number(payment.amount);
             const newPaidAmount = invoicePaid + paymentAmount;
-            const newStatus = newPaidAmount >= invoiceTotal
-                ? 'PAID'
-                : newPaidAmount > 0
-                    ? 'PARTIAL'
-                    : 'UNPAID';
+            const newStatus = (0, finance_utils_1.calculateInvoiceStatus)(newPaidAmount, invoiceTotal);
             await tx.invoice.update({
                 where: { id: payment.invoice.id },
                 data: {
@@ -150725,7 +150832,7 @@ let FinanceService = class FinanceService {
             if (newPaidAmount > totalAmount) {
                 throw new common_1.BadRequestException('Payment amount exceeds remaining balance');
             }
-            const newStatus = newPaidAmount >= totalAmount ? 'PAID' : 'PARTIAL';
+            const newStatus = (0, finance_utils_1.calculateInvoiceStatus)(newPaidAmount, totalAmount);
             const payment = await tx.feePayment.create({
                 data: {
                     amount: dto.amount,
@@ -150888,13 +150995,7 @@ let FinanceService = class FinanceService {
             const paymentAmount = Number(payment.amount);
             const newPaidAmount = Math.max(0, invoicePaid - paymentAmount);
             const isOverdue = new Date(payment.invoice.dueDate) < new Date() && newPaidAmount < invoiceTotal;
-            const newStatus = newPaidAmount >= invoiceTotal
-                ? 'PAID'
-                : isOverdue
-                    ? 'OVERDUE'
-                    : newPaidAmount > 0
-                        ? 'PARTIAL'
-                        : 'UNPAID';
+            const newStatus = (0, finance_utils_1.calculateInvoiceStatus)(newPaidAmount, invoiceTotal, isOverdue);
             await tx.invoice.update({
                 where: { id: payment.invoice.id },
                 data: {
@@ -151578,6 +151679,53 @@ exports.FinanceService = FinanceService = __decorate([
 
 /***/ },
 
+/***/ 76543
+(__unused_webpack_module, exports) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.calculateInvoiceDiscountFields = calculateInvoiceDiscountFields;
+exports.calculateInvoiceStatus = calculateInvoiceStatus;
+function calculateInvoiceDiscountFields(feeAmount, enrollment) {
+    if (!enrollment?.discountType ||
+        enrollment.discountValue == null ||
+        enrollment.discountValue <= 0) {
+        return {
+            grossAmount: feeAmount,
+            discountType: null,
+            discountValue: null,
+            discountAmount: 0,
+            totalAmount: feeAmount,
+        };
+    }
+    const discountAmount = enrollment.discountType === 'PERCENTAGE'
+        ? Math.round((feeAmount * Math.min(enrollment.discountValue, 100)) / 100)
+        : Math.min(enrollment.discountValue, feeAmount);
+    return {
+        grossAmount: feeAmount,
+        discountType: enrollment.discountType,
+        discountValue: enrollment.discountValue,
+        discountAmount,
+        totalAmount: feeAmount - discountAmount,
+    };
+}
+function calculateInvoiceStatus(paidAmount, totalAmount, isOverdue = false) {
+    if (paidAmount >= totalAmount) {
+        return 'PAID';
+    }
+    if (isOverdue) {
+        return 'OVERDUE';
+    }
+    if (paidAmount > 0) {
+        return 'PARTIAL';
+    }
+    return 'UNPAID';
+}
+
+
+/***/ },
+
 /***/ 1082
 (__unused_webpack_module, exports, __webpack_require__) {
 
@@ -151983,6 +152131,7 @@ let HealthController = class HealthController {
     }
     async check() {
         try {
+            // Intentional raw probe: the health check only needs a lightweight DB ping.
             await this.prisma.$queryRaw `SELECT 1`;
             return {
                 status: 'ok',
@@ -152859,6 +153008,8 @@ let ParentsService = class ParentsService {
             where: { slug: 'parent', schoolId },
         });
         if (!parentRole) {
+            // Parent bootstrap may need an unscoped role lookup before the user record
+            // exists in tenant context, so this fallback is intentional.
             parentRole = await this.prisma.unscopedClient.role.findFirst({
                 where: { slug: 'parent', schoolId },
             });
@@ -153009,6 +153160,7 @@ let ParentsService = class ParentsService {
             where: { slug: 'parent', schoolId },
         });
         if (!parentRole) {
+            // Keep parent-role discovery explicit when tenant-scoped lookup misses.
             parentRole = await this.prisma.unscopedClient?.role?.findFirst?.({
                 where: { slug: 'parent', schoolId },
             }) ?? null;
@@ -153487,6 +153639,7 @@ class UpdateSchoolDto {
     website;
     isActive;
     subscriptionPlanId;
+    subscriptionExpiresAt;
 }
 exports.UpdateSchoolDto = UpdateSchoolDto;
 __decorate([
@@ -153549,6 +153702,12 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], UpdateSchoolDto.prototype, "subscriptionPlanId", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Manual expiry date override' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], UpdateSchoolDto.prototype, "subscriptionExpiresAt", void 0);
 class SwitchSchoolAdminDto {
     adminEmail;
     adminPassword;
@@ -153596,6 +153755,9 @@ class CreateSubscriptionPlanDto {
     maxTeachers;
     maxCampuses;
     price;
+    isActive;
+    features;
+    durationDays;
 }
 exports.CreateSubscriptionPlanDto = CreateSubscriptionPlanDto;
 __decorate([
@@ -153630,12 +153792,31 @@ __decorate([
     __metadata("design:type", Number)
 ], CreateSubscriptionPlanDto.prototype, "maxCampuses", void 0);
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)({ example: 99.99 }),
-    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiProperty)({ example: 0, description: 'Price in PKR/month (set to 0 for free plans)' }),
     (0, class_validator_1.IsNumber)(),
     (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], CreateSubscriptionPlanDto.prototype, "price", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ example: true }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateSubscriptionPlanDto.prototype, "isActive", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ example: ['Attendance', 'Exams'] }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], CreateSubscriptionPlanDto.prototype, "features", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ example: 30, description: 'Duration in days (null = lifetime)' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], CreateSubscriptionPlanDto.prototype, "durationDays", void 0);
 class UpdateSubscriptionPlanDto {
     name;
     maxStudents;
@@ -153643,6 +153824,9 @@ class UpdateSubscriptionPlanDto {
     maxCampuses;
     price;
     isActive;
+    features;
+    durationDays;
+    applyToExisting;
 }
 exports.UpdateSubscriptionPlanDto = UpdateSubscriptionPlanDto;
 __decorate([
@@ -153685,6 +153869,26 @@ __decorate([
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], UpdateSubscriptionPlanDto.prototype, "isActive", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ example: ['Attendance', 'Exams'] }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], UpdateSubscriptionPlanDto.prototype, "features", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], UpdateSubscriptionPlanDto.prototype, "durationDays", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Apply plan duration changes to all existing schools' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateSubscriptionPlanDto.prototype, "applyToExisting", void 0);
 // ─── Platform Admin DTOs ─────────────────────────────────────────
 class CreatePlatformAdminDto {
     email;
@@ -154367,6 +154571,9 @@ let PlatformService = class PlatformService {
                     email: dto.email,
                     website: dto.website,
                     subscriptionPlanId: dto.subscriptionPlanId,
+                    subscriptionExpiresAt: dto.subscriptionPlanId
+                        ? await this.calculateSubscriptionExpiry(dto.subscriptionPlanId)
+                        : null,
                 },
                 include: { subscriptionPlan: true },
             });
@@ -154381,19 +154588,49 @@ let PlatformService = class PlatformService {
             });
             // 2. Create default roles
             const superAdminRole = await tx.role.create({
-                data: { name: 'Super Admin', slug: 'super_admin', description: 'Full school access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Super Admin',
+                    slug: 'super_admin',
+                    description: 'Full school access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             const adminRole = await tx.role.create({
-                data: { name: 'Admin', slug: 'admin', description: 'Administrative access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Admin',
+                    slug: 'admin',
+                    description: 'Administrative access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             const teacherRole = await tx.role.create({
-                data: { name: 'Teacher', slug: 'teacher', description: 'Teacher access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Teacher',
+                    slug: 'teacher',
+                    description: 'Teacher access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             await tx.role.create({
-                data: { name: 'Student', slug: 'student', description: 'Student access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Student',
+                    slug: 'student',
+                    description: 'Student access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             await tx.role.create({
-                data: { name: 'Parent', slug: 'parent', description: 'Parent access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Parent',
+                    slug: 'parent',
+                    description: 'Parent access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             // 3. Assign ALL permissions to Super Admin role
             if (allPermissions.length > 0) {
@@ -154414,11 +154651,22 @@ let PlatformService = class PlatformService {
                 });
                 // 5. Assign limited permissions to Teacher role
                 const teacherPermSlugs = [
-                    'students:read', 'teachers:read',
-                    'academics:read', 'attendance:read', 'attendance:create', 'attendance:update',
-                    'exams:read', 'exams:create', 'exams:update',
-                    'assignments:read', 'assignments:create', 'assignments:update', 'assignments:delete',
-                    'grades:read', 'grades:create', 'grades:update',
+                    'students:read',
+                    'teachers:read',
+                    'academics:read',
+                    'attendance:read',
+                    'attendance:create',
+                    'attendance:update',
+                    'exams:read',
+                    'exams:create',
+                    'exams:update',
+                    'assignments:read',
+                    'assignments:create',
+                    'assignments:update',
+                    'assignments:delete',
+                    'grades:read',
+                    'grades:create',
+                    'grades:update',
                     'calendar:read',
                 ];
                 await tx.rolePermission.createMany({
@@ -154525,14 +154773,19 @@ let PlatformService = class PlatformService {
             orderBy: { createdAt: 'desc' },
             take: 5,
             select: {
-                id: true, firstName: true, lastName: true, email: true,
-                isActive: true, createdAt: true, lastLoginAt: true,
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                isActive: true,
+                createdAt: true,
+                lastLoginAt: true,
                 role: { select: { name: true, slug: true } },
             },
         });
         // Onboarding checklist
         const onboarding = {
-            hasAdmin: await this.prisma.user.count({ where: { schoolId: id } }) > 0,
+            hasAdmin: (await this.prisma.user.count({ where: { schoolId: id } })) > 0,
             hasStudents: (school._count.students || 0) > 0,
             hasTeachers: (school._count.teachers || 0) > 0,
             hasClasses: (school._count.classes || 0) > 0,
@@ -154544,7 +154797,9 @@ let PlatformService = class PlatformService {
         await this.findSchoolById(id);
         // If changing subscription plan, validate current usage against new plan limits
         if (dto.subscriptionPlanId) {
-            const newPlan = await this.prisma.subscriptionPlan.findUnique({ where: { id: dto.subscriptionPlanId } });
+            const newPlan = await this.prisma.subscriptionPlan.findUnique({
+                where: { id: dto.subscriptionPlanId },
+            });
             if (!newPlan)
                 throw new common_1.NotFoundException('Subscription plan not found');
             const counts = await this.prisma.school.findUnique({
@@ -154581,9 +154836,17 @@ let PlatformService = class PlatformService {
                 throw new common_1.ConflictException('Another school with this slug or code already exists');
             }
         }
+        // Handle subscription expiry calculation if plan changed or manual override provided
+        const data = { ...dto };
+        if (dto.subscriptionPlanId) {
+            data.subscriptionExpiresAt = await this.calculateSubscriptionExpiry(dto.subscriptionPlanId);
+        }
+        if (dto.subscriptionExpiresAt) {
+            data.subscriptionExpiresAt = new Date(dto.subscriptionExpiresAt);
+        }
         return this.prisma.school.update({
             where: { id },
-            data: dto,
+            data,
             include: { subscriptionPlan: true },
         });
     }
@@ -154637,7 +154900,11 @@ let PlatformService = class PlatformService {
             data: {
                 email: dto.adminEmail || adminUser.email,
                 passwordHash,
-                googleId: (dto.adminGoogleId && dto.adminGoogleId !== 'existing') ? dto.adminGoogleId : (dto.adminGoogleId === 'existing' ? adminUser.googleId : null),
+                googleId: dto.adminGoogleId && dto.adminGoogleId !== 'existing'
+                    ? dto.adminGoogleId
+                    : dto.adminGoogleId === 'existing'
+                        ? adminUser.googleId
+                        : null,
                 firstName: dto.adminFirstName || adminUser.firstName,
                 lastName: dto.adminLastName || adminUser.lastName,
             },
@@ -154681,7 +154948,7 @@ let PlatformService = class PlatformService {
             await tx.academicYear.deleteMany({ where: { schoolId: id } });
             await tx.campus.deleteMany({ where: { schoolId: id } });
             // Delete role permissions before roles (FK constraint)
-            const roleIds = (await tx.role.findMany({ where: { schoolId: id }, select: { id: true } })).map(r => r.id);
+            const roleIds = (await tx.role.findMany({ where: { schoolId: id }, select: { id: true } })).map((r) => r.id);
             if (roleIds.length > 0) {
                 await tx.rolePermission.deleteMany({ where: { roleId: { in: roleIds } } });
             }
@@ -154780,9 +155047,15 @@ let PlatformService = class PlatformService {
         });
         const monthlyRevenue = revenueData.reduce((sum, s) => sum + (s.subscriptionPlan?.price || 0), 0);
         return {
-            totalSchools, activeSchools, inactiveSchools,
-            totalUsers, totalStudents, totalTeachers, totalPlans,
-            newSchoolsThisMonth, monthlyRevenue,
+            totalSchools,
+            activeSchools,
+            inactiveSchools,
+            totalUsers,
+            totalStudents,
+            totalTeachers,
+            totalPlans,
+            newSchoolsThisMonth,
+            monthlyRevenue,
         };
     }
     // ═══════════════════════════════════════════════════════════════
@@ -154794,7 +155067,11 @@ let PlatformService = class PlatformService {
             orderBy: { createdAt: 'desc' },
             take: limit,
             select: {
-                id: true, name: true, slug: true, isActive: true, createdAt: true,
+                id: true,
+                name: true,
+                slug: true,
+                isActive: true,
+                createdAt: true,
                 subscriptionPlan: { select: { name: true } },
             },
         });
@@ -154804,7 +155081,10 @@ let PlatformService = class PlatformService {
             orderBy: { lastLoginAt: 'desc' },
             take: limit,
             select: {
-                firstName: true, lastName: true, email: true, lastLoginAt: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                lastLoginAt: true,
                 school: { select: { name: true, slug: true } },
             },
         });
@@ -154878,8 +155158,13 @@ let PlatformService = class PlatformService {
     async findAllPlatformAdmins() {
         return this.prisma.platformAdmin.findMany({
             select: {
-                id: true, email: true, firstName: true, lastName: true,
-                isActive: true, lastLoginAt: true, createdAt: true,
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                isActive: true,
+                lastLoginAt: true,
+                createdAt: true,
             },
             orderBy: { createdAt: 'asc' },
         });
@@ -154897,8 +155182,12 @@ let PlatformService = class PlatformService {
                 lastName: data.lastName,
             },
             select: {
-                id: true, email: true, firstName: true, lastName: true,
-                isActive: true, createdAt: true,
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                isActive: true,
+                createdAt: true,
             },
         });
     }
@@ -154910,8 +155199,13 @@ let PlatformService = class PlatformService {
             where: { id },
             data: { isActive: !admin.isActive },
             select: {
-                id: true, email: true, firstName: true, lastName: true,
-                isActive: true, lastLoginAt: true, createdAt: true,
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                isActive: true,
+                lastLoginAt: true,
+                createdAt: true,
             },
         });
     }
@@ -154933,9 +155227,12 @@ let PlatformService = class PlatformService {
             throw new common_1.NotFoundException(`Subscription plan with ID "${id}" not found`);
         }
         // If lowering any limit, check no school on this plan exceeds the new limit
-        const loweredLimits = (dto.maxStudents != null && (existing.maxStudents == null || dto.maxStudents < existing.maxStudents))
-            || (dto.maxTeachers != null && (existing.maxTeachers == null || dto.maxTeachers < existing.maxTeachers))
-            || (dto.maxCampuses != null && (existing.maxCampuses == null || dto.maxCampuses < existing.maxCampuses));
+        const loweredLimits = (dto.maxStudents != null &&
+            (existing.maxStudents == null || dto.maxStudents < existing.maxStudents)) ||
+            (dto.maxTeachers != null &&
+                (existing.maxTeachers == null || dto.maxTeachers < existing.maxTeachers)) ||
+            (dto.maxCampuses != null &&
+                (existing.maxCampuses == null || dto.maxCampuses < existing.maxCampuses));
         if (loweredLimits) {
             const schools = await this.prisma.school.findMany({
                 where: { subscriptionPlanId: id },
@@ -154960,11 +155257,32 @@ let PlatformService = class PlatformService {
                 throw new common_1.BadRequestException(`Cannot lower plan limits. Schools exceed new limits:\n${violations.join('\n')}`);
             }
         }
-        return this.prisma.subscriptionPlan.update({
+        const { applyToExisting, ...planData } = dto;
+        const updatedPlan = await this.prisma.subscriptionPlan.update({
             where: { id },
-            data: dto,
+            data: planData,
             include: { _count: { select: { schools: true } } },
         });
+        // If duration changed and user explicitly requested sync
+        if (applyToExisting &&
+            (dto.durationDays !== undefined || existing.durationDays !== dto.durationDays)) {
+            const duration = dto.durationDays ?? updatedPlan.durationDays;
+            if (duration && duration > 0) {
+                // Intentional raw SQL: one bulk update keeps plan synchronization atomic
+                // and avoids loading every school row through Prisma one by one.
+                await this.prisma.$executeRawUnsafe(`UPDATE schools 
+           SET "subscriptionExpiresAt" = "createdAt" + ($1 || ' days')::interval 
+           WHERE "subscriptionPlanId" = $2`, duration.toString(), id);
+            }
+            else {
+                // Reset to lifetime (null)
+                await this.prisma.school.updateMany({
+                    where: { subscriptionPlanId: id },
+                    data: { subscriptionExpiresAt: null },
+                });
+            }
+        }
+        return updatedPlan;
     }
     async deletePlan(id) {
         const existing = await this.prisma.subscriptionPlan.findUnique({
@@ -155033,10 +155351,16 @@ let PlatformService = class PlatformService {
     // SCHOOL REGISTRATION REQUESTS (self-service signup + approval)
     // ═══════════════════════════════════════════════════════════════
     slugify(s) {
-        return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        return s
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/(^-|-$)/g, '');
     }
     codeify(s) {
-        return s.toUpperCase().replace(/[^A-Z0-9]+/g, '-').substring(0, 8);
+        return s
+            .toUpperCase()
+            .replace(/[^A-Z0-9]+/g, '-')
+            .substring(0, 8);
     }
     /**
      * Submit a school registration request (public — no auth required).
@@ -155200,6 +155524,7 @@ let PlatformService = class PlatformService {
                     email: reg.email,
                     website: reg.website,
                     subscriptionPlanId: planId,
+                    subscriptionExpiresAt: await this.calculateSubscriptionExpiry(planId),
                 },
                 include: { subscriptionPlan: true },
             });
@@ -155209,19 +155534,49 @@ let PlatformService = class PlatformService {
             });
             // Create default roles
             const superAdminRole = await tx.role.create({
-                data: { name: 'Super Admin', slug: 'super_admin', description: 'Full school access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Super Admin',
+                    slug: 'super_admin',
+                    description: 'Full school access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             const adminRole = await tx.role.create({
-                data: { name: 'Admin', slug: 'admin', description: 'Administrative access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Admin',
+                    slug: 'admin',
+                    description: 'Administrative access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             const teacherRole = await tx.role.create({
-                data: { name: 'Teacher', slug: 'teacher', description: 'Teacher access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Teacher',
+                    slug: 'teacher',
+                    description: 'Teacher access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             await tx.role.create({
-                data: { name: 'Student', slug: 'student', description: 'Student access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Student',
+                    slug: 'student',
+                    description: 'Student access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             await tx.role.create({
-                data: { name: 'Parent', slug: 'parent', description: 'Parent access', isSystem: true, schoolId: school.id },
+                data: {
+                    name: 'Parent',
+                    slug: 'parent',
+                    description: 'Parent access',
+                    isSystem: true,
+                    schoolId: school.id,
+                },
             });
             // Assign permissions
             if (allPermissions.length > 0) {
@@ -155229,18 +155584,33 @@ let PlatformService = class PlatformService {
                     data: allPermissions.map((p) => ({ roleId: superAdminRole.id, permissionId: p.id })),
                 });
                 await tx.rolePermission.createMany({
-                    data: allPermissions.filter((p) => p.slug !== 'platform:manage').map((p) => ({ roleId: adminRole.id, permissionId: p.id })),
+                    data: allPermissions
+                        .filter((p) => p.slug !== 'platform:manage')
+                        .map((p) => ({ roleId: adminRole.id, permissionId: p.id })),
                 });
                 const teacherPermSlugs = [
-                    'students:read', 'teachers:read',
-                    'academics:read', 'attendance:read', 'attendance:create', 'attendance:update',
-                    'exams:read', 'exams:create', 'exams:update',
-                    'assignments:read', 'assignments:create', 'assignments:update', 'assignments:delete',
-                    'grades:read', 'grades:create', 'grades:update',
+                    'students:read',
+                    'teachers:read',
+                    'academics:read',
+                    'attendance:read',
+                    'attendance:create',
+                    'attendance:update',
+                    'exams:read',
+                    'exams:create',
+                    'exams:update',
+                    'assignments:read',
+                    'assignments:create',
+                    'assignments:update',
+                    'assignments:delete',
+                    'grades:read',
+                    'grades:create',
+                    'grades:update',
                     'calendar:read',
                 ];
                 await tx.rolePermission.createMany({
-                    data: allPermissions.filter((p) => teacherPermSlugs.includes(p.slug)).map((p) => ({ roleId: teacherRole.id, permissionId: p.id })),
+                    data: allPermissions
+                        .filter((p) => teacherPermSlugs.includes(p.slug))
+                        .map((p) => ({ roleId: teacherRole.id, permissionId: p.id })),
                 });
             }
             // Create admin user with pre-hashed password
@@ -155278,6 +155648,17 @@ let PlatformService = class PlatformService {
             },
         });
         return { id, status: 'REJECTED', reason: dto.reason };
+    }
+    // ═══════════════════════════════════════════════════════════════
+    // HELPERS
+    // ═══════════════════════════════════════════════════════════════
+    async calculateSubscriptionExpiry(planId, startDate = new Date()) {
+        const plan = await this.prisma.subscriptionPlan.findUnique({ where: { id: planId } });
+        if (!plan || !plan.durationDays)
+            return null;
+        const expiryDate = new Date(startDate);
+        expiryDate.setDate(expiryDate.getDate() + plan.durationDays);
+        return expiryDate;
     }
 };
 exports.PlatformService = PlatformService;
@@ -159235,10 +159616,7 @@ let TeachersService = class TeachersService {
             return {};
         }
         return {
-            OR: [
-                { academicYearId },
-                { academicYearId: null },
-            ],
+            OR: [{ academicYearId }, { academicYearId: null }],
         };
     }
     /**
@@ -159300,6 +159678,8 @@ let TeachersService = class TeachersService {
                     where: { slug: 'teacher', schoolId },
                 });
                 if (!teacherRole) {
+                    // Default role lookup is intentionally unscoped here because the tenant
+                    // extension may reject role discovery before creation completes.
                     teacherRole = await this.prisma.unscopedClient.role.findFirst({
                         where: { slug: 'teacher', schoolId },
                     });
@@ -159355,7 +159735,16 @@ let TeachersService = class TeachersService {
                 classTeacherOfId: dto.classTeacherOfId || undefined,
             },
             include: {
-                user: { select: { id: true, email: true, firstName: true, lastName: true, roleId: true, role: { select: { name: true } } } },
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        roleId: true,
+                        role: { select: { name: true } },
+                    },
+                },
                 classTeacherOf: { select: { id: true, name: true } },
             },
         });
@@ -159375,12 +159764,24 @@ let TeachersService = class TeachersService {
             this.prisma.teacher.findMany({
                 where,
                 include: {
-                    user: { select: { id: true, email: true, firstName: true, lastName: true, roleId: true, role: { select: { name: true } } } },
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            firstName: true,
+                            lastName: true,
+                            roleId: true,
+                            role: { select: { name: true } },
+                        },
+                    },
                     classTeacherOf: { select: { id: true, name: true } },
                     classAssignments: {
                         where: { isActive: true },
                         select: {
-                            id: true, classId: true, sectionId: true, subjectId: true,
+                            id: true,
+                            classId: true,
+                            sectionId: true,
+                            subjectId: true,
                             class: { select: { id: true, name: true } },
                             section: { select: { id: true, name: true } },
                             subject: { select: { id: true, name: true } },
@@ -159400,7 +159801,16 @@ let TeachersService = class TeachersService {
         const teacher = await this.prisma.teacher.findFirst({
             where: { id, schoolId },
             include: {
-                user: { select: { id: true, email: true, firstName: true, lastName: true, roleId: true, role: { select: { name: true } } } },
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        roleId: true,
+                        role: { select: { name: true } },
+                    },
+                },
                 classTeacherOf: { select: { id: true, name: true } },
             },
         });
@@ -159437,7 +159847,10 @@ let TeachersService = class TeachersService {
             data.campusId = dto.campusId || null;
             // Also update user's campusId if teacher has a linked user account
             if (teacher.userId) {
-                await this.prisma.user.update({ where: { id: teacher.userId }, data: { campusId: dto.campusId || null } });
+                await this.prisma.user.update({
+                    where: { id: teacher.userId },
+                    data: { campusId: dto.campusId || null },
+                });
             }
         }
         // Handle classTeacherOfId — allow setting to null to unset
@@ -159473,7 +159886,16 @@ let TeachersService = class TeachersService {
             where: { id },
             data,
             include: {
-                user: { select: { id: true, email: true, firstName: true, lastName: true, roleId: true, role: { select: { name: true } } } },
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        roleId: true,
+                        role: { select: { name: true } },
+                    },
+                },
                 classTeacherOf: { select: { id: true, name: true } },
             },
         });
@@ -159508,8 +159930,12 @@ let TeachersService = class TeachersService {
             include: {
                 user: {
                     select: {
-                        id: true, email: true, firstName: true, lastName: true,
-                        phone: true, role: { select: { name: true, slug: true } },
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        phone: true,
+                        role: { select: { name: true, slug: true } },
                     },
                 },
                 classTeacherOf: { select: { id: true, name: true } },
@@ -159700,21 +160126,37 @@ let TeachersService = class TeachersService {
             }
             for (const subjectId of subjectIds) {
                 for (const sectionId of sectionIds) {
-                    desired.push({ classId: a.classId, sectionId, subjectId, academicYearId: effectiveYearId });
+                    desired.push({
+                        classId: a.classId,
+                        sectionId,
+                        subjectId,
+                        academicYearId: effectiveYearId,
+                    });
                 }
             }
         }
         // Validate referenced classes, sections, and subjects
         const classIds = [...new Set(desired.map((d) => d.classId))];
-        const sectionIds = [...new Set(desired.map((d) => d.sectionId).filter((id) => id !== null))];
+        const sectionIds = [
+            ...new Set(desired.map((d) => d.sectionId).filter((id) => id !== null)),
+        ];
         const subjectIds = [...new Set(desired.map((d) => d.subjectId))];
         const [classes, sections, subjects] = await Promise.all([
-            this.prisma.class.findMany({ where: { id: { in: classIds }, schoolId }, select: { id: true } }),
+            this.prisma.class.findMany({
+                where: { id: { in: classIds }, schoolId },
+                select: { id: true },
+            }),
             sectionIds.length > 0
-                ? this.prisma.section.findMany({ where: { id: { in: sectionIds }, schoolId }, select: { id: true, classId: true } })
+                ? this.prisma.section.findMany({
+                    where: { id: { in: sectionIds }, schoolId },
+                    select: { id: true, classId: true },
+                })
                 : Promise.resolve([]),
             subjectIds.length > 0
-                ? this.prisma.subject.findMany({ where: { id: { in: subjectIds }, schoolId, deletedAt: null }, select: { id: true, classId: true } })
+                ? this.prisma.subject.findMany({
+                    where: { id: { in: subjectIds }, schoolId, deletedAt: null },
+                    select: { id: true, classId: true },
+                })
                 : Promise.resolve([]),
         ]);
         const classSet = new Set(classes.map((item) => item.id));
@@ -159733,8 +160175,8 @@ let TeachersService = class TeachersService {
         }
         // Check for conflicts: same class + subject + overlapping section in the same academic year
         if (desired.length > 0) {
-            const desiredClassIds = [...new Set(desired.map(d => d.classId))];
-            const desiredSubjectIds = [...new Set(desired.map(d => d.subjectId))];
+            const desiredClassIds = [...new Set(desired.map((d) => d.classId))];
+            const desiredSubjectIds = [...new Set(desired.map((d) => d.subjectId))];
             const conflicting = await this.prisma.teacherClassAssignment.findMany({
                 where: {
                     schoolId,
@@ -159765,7 +160207,9 @@ let TeachersService = class TeachersService {
                         const className = c.class.name;
                         const sectionName = c.section?.name;
                         const subjectName = c.subject?.name || 'Subject';
-                        const label = sectionName ? `${className} (${sectionName}) - ${subjectName}` : `${className} - ${subjectName}`;
+                        const label = sectionName
+                            ? `${className} (${sectionName}) - ${subjectName}`
+                            : `${className} - ${subjectName}`;
                         conflicts.push(`${label} is already assigned to ${otherName}`);
                     }
                 }
@@ -159782,7 +160226,14 @@ let TeachersService = class TeachersService {
                 schoolId,
                 ...this.buildAssignmentAcademicYearFilter(academicYearId),
             },
-            select: { id: true, classId: true, sectionId: true, subjectId: true, academicYearId: true, isActive: true },
+            select: {
+                id: true,
+                classId: true,
+                sectionId: true,
+                subjectId: true,
+                academicYearId: true,
+                isActive: true,
+            },
         });
         const managedExisting = existing.filter((row) => {
             const isClassTeacherBroadRow = teacher?.classTeacherOfId &&
@@ -159794,7 +160245,7 @@ let TeachersService = class TeachersService {
         // Run all mutating operations in a single transaction
         await this.prisma.$transaction(async (tx) => {
             // Step 1: Deactivate all managed assignments in the selected year scope
-            const activeIds = managedExisting.filter(a => a.isActive).map(a => a.id);
+            const activeIds = managedExisting.filter((a) => a.isActive).map((a) => a.id);
             if (activeIds.length > 0) {
                 await tx.teacherClassAssignment.updateMany({
                     where: { id: { in: activeIds } },
@@ -159832,7 +160283,7 @@ let TeachersService = class TeachersService {
             }
             // Step 3: Hard-delete leftover managed duplicates to keep the table clean
             const keepIds = new Set(usedIds);
-            const toDelete = managedExisting.filter(e => !keepIds.has(e.id)).map(e => e.id);
+            const toDelete = managedExisting.filter((e) => !keepIds.has(e.id)).map((e) => e.id);
             if (toDelete.length > 0) {
                 await tx.teacherClassAssignment.deleteMany({
                     where: { id: { in: toDelete } },
@@ -159851,8 +160302,16 @@ let TeachersService = class TeachersService {
             select: { classId: true, sectionId: true, subjectId: true },
         });
         const classIds = [...new Set(assignments.map((a) => a.classId))];
-        const sectionIds = [...new Set(assignments.map((a) => a.sectionId).filter((id) => id !== null))];
-        const subjectIds = [...new Set(assignments.map((a) => a.subjectId).filter((id) => id !== null))];
+        const sectionIds = [
+            ...new Set(assignments
+                .map((a) => a.sectionId)
+                .filter((id) => id !== null)),
+        ];
+        const subjectIds = [
+            ...new Set(assignments
+                .map((a) => a.subjectId)
+                .filter((id) => id !== null)),
+        ];
         return { classIds, sectionIds, subjectIds };
     }
 };
@@ -160751,7 +161210,7 @@ let SupabaseStorageService = SupabaseStorageService_1 = class SupabaseStorageSer
     }
     async uploadFile(file, bucket, folder) {
         if (!this.supabase) {
-            throw new Error('Supabase client not initialized. Please ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set in your .env file.');
+            throw new Error('Supabase client not initialized. Please ensure SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL and a valid Supabase key are set.');
         }
         const fileExt = file.originalname.split('.').pop();
         const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`;
@@ -160777,7 +161236,7 @@ let SupabaseStorageService = SupabaseStorageService_1 = class SupabaseStorageSer
     }
     async deleteFile(bucket, path) {
         if (!this.supabase) {
-            throw new Error('Supabase client not initialized. Please ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set in your .env file.');
+            throw new Error('Supabase client not initialized. Please ensure SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL and a valid Supabase key are set.');
         }
         this.logger.log(`Deleting file from bucket ${bucket}, path ${path}`);
         const { error } = await this.supabase.storage
@@ -161233,6 +161692,13 @@ let UsersController = class UsersController {
     update(id, schoolId, dto) {
         return this.usersService.update(id, schoolId, dto);
     }
+    resetPassword(id, schoolId, actor, req) {
+        return this.usersService.resetPassword(id, schoolId, actor.userId, {
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
+            campusId: actor.campusId ?? null,
+        });
+    }
     remove(id, schoolId) {
         return this.usersService.remove(id, schoolId);
     }
@@ -161316,6 +161782,19 @@ __decorate([
     __metadata("design:paramtypes", [String, String, typeof (_h = typeof dto_1.UpdateUserDto !== "undefined" && dto_1.UpdateUserDto) === "function" ? _h : Object]),
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "update", null);
+__decorate([
+    (0, common_1.Post)(':id/reset-password'),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.UPDATE_USER),
+    (0, swagger_1.ApiOperation)({ summary: 'Reset a user password (admin) — returns a temporary password' }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Temporary password returned' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, decorators_1.TenantId)()),
+    __param(2, (0, decorators_1.CurrentUser)()),
+    __param(3, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, Object, Object]),
+    __metadata("design:returntype", void 0)
+], UsersController.prototype, "resetPassword", null);
 __decorate([
     (0, common_1.Delete)(':id'),
     (0, decorators_1.RequirePermission)(constants_1.Permission.DELETE_USER),
@@ -161423,6 +161902,7 @@ const common_1 = __webpack_require__(47305);
 const prisma_service_1 = __webpack_require__(29105);
 const dto_1 = __webpack_require__(70549);
 const bcrypt = __importStar(__webpack_require__(88016));
+const crypto_1 = __webpack_require__(76982);
 let UsersService = class UsersService {
     prisma;
     constructor(prisma) {
@@ -161527,6 +162007,43 @@ let UsersService = class UsersService {
             data,
             include: { role: true },
         });
+    }
+    async resetPassword(id, schoolId, actorUserId, meta) {
+        const user = await this.prisma.user.findFirst({
+            where: { id, schoolId },
+            select: { id: true, email: true, googleId: true, passwordHash: true, mustChangePassword: true },
+        });
+        if (!user) {
+            throw new common_1.NotFoundException(`User with ID "${id}" not found`);
+        }
+        // Professional default: do not allow setting a password for Google-only accounts.
+        if (!user.passwordHash && user.googleId) {
+            throw new common_1.BadRequestException('This user signs in with Google and cannot be reset with a password.');
+        }
+        const temporaryPassword = (0, crypto_1.randomBytes)(9).toString('base64url'); // 12 chars, URL-safe
+        const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+        await this.prisma.$transaction([
+            this.prisma.user.update({
+                where: { id },
+                data: { passwordHash, mustChangePassword: true },
+            }),
+            this.prisma.auditLog.create({
+                data: {
+                    action: 'RESET_PASSWORD',
+                    module: 'users',
+                    entityType: 'User',
+                    entityId: id,
+                    oldData: { mustChangePassword: user.mustChangePassword },
+                    newData: { mustChangePassword: true },
+                    ipAddress: meta?.ipAddress,
+                    userAgent: meta?.userAgent,
+                    schoolId,
+                    campusId: meta?.campusId ?? null,
+                    userId: actorUserId,
+                },
+            }),
+        ]);
+        return { temporaryPassword };
     }
     async updateAvatar(id, schoolId, avatarUrl) {
         await this.findById(id, schoolId);
@@ -161970,19 +162487,44 @@ const core_1 = __webpack_require__(26733);
 const app_module_1 = __webpack_require__(13346);
 const platform_express_1 = __webpack_require__(16459);
 const common_1 = __webpack_require__(47305);
+const config_1 = __webpack_require__(25425);
 const helmet_1 = __importDefault(__webpack_require__(84279));
 const compression_1 = __importDefault(__webpack_require__(26830));
+const database_url_utils_1 = __webpack_require__(91400);
 // Use require for express to avoid pnpm resolution issues
 const express = __webpack_require__(15711);
 let cachedServer;
+function parseCorsOrigins(value) {
+    return (value ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .map((s) => (s.endsWith('/') ? s.slice(0, -1) : s))
+        .filter(Boolean);
+}
 async function bootstrap() {
     if (!cachedServer) {
         const logger = new common_1.Logger('Serverless-Bootstrap');
         const expressApp = express();
         const app = await core_1.NestFactory.create(app_module_1.AppModule, new platform_express_1.ExpressAdapter(expressApp), { logger: ['error', 'warn', 'log'] });
-        // Apply the exact same middlewares from main.ts
+        const configService = app.get(config_1.ConfigService);
+        const dbValidation = (0, database_url_utils_1.validateDatabaseUrlsForServerless)(process.env.DATABASE_URL, process.env.DIRECT_DATABASE_URL);
+        for (const warning of dbValidation.warnings) {
+            logger.warn(`[database-config] ${warning}`);
+        }
+        // Keep serverless bootstrap behavior aligned with main.ts.
+        const allowedOrigins = parseCorsOrigins(configService.get('CORS_ORIGINS', 'http://localhost:3000'));
+        const isDev = configService.get('NODE_ENV', 'development') === 'development';
+        logger.log(`CORS origins: ${allowedOrigins.length ? allowedOrigins.join(', ') : '(none)'}`);
         app.enableCors({
-            origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000'],
+            origin: (origin, cb) => {
+                if (!origin)
+                    return cb(null, true);
+                const normalized = origin.endsWith('/') ? origin.slice(0, -1) : origin;
+                if (isDev && (normalized.includes('localhost') || normalized.includes('127.0.0.1'))) {
+                    return cb(null, true);
+                }
+                return cb(null, allowedOrigins.includes(normalized));
+            },
             credentials: true,
             methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
             allowedHeaders: ['Content-Type', 'Authorization', 'x-school-id', 'x-campus-id'],
@@ -161993,7 +162535,7 @@ async function bootstrap() {
             contentSecurityPolicy: false,
         }));
         app.use((0, compression_1.default)());
-        app.setGlobalPrefix(process.env.API_PREFIX || '/api/v1', { exclude: ['health'] });
+        app.setGlobalPrefix(configService.get('API_PREFIX', 'api/v1'), { exclude: ['health'] });
         app.useGlobalPipes(new common_1.ValidationPipe({
             whitelist: true,
             forbidNonWhitelisted: true,

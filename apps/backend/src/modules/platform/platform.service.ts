@@ -878,7 +878,8 @@ export class PlatformService {
       const duration = dto.durationDays ?? updatedPlan.durationDays
 
       if (duration && duration > 0) {
-        // SCALABLE BULK UPDATE: Using raw SQL to update all schools in one go
+        // Intentional raw SQL: one bulk update keeps plan synchronization atomic
+        // and avoids loading every school row through Prisma one by one.
         await this.prisma.$executeRawUnsafe(
           `UPDATE schools 
            SET "subscriptionExpiresAt" = "createdAt" + ($1 || ' days')::interval 

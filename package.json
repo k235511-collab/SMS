@@ -6,6 +6,11 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
+    "quality": "node -e \"const { execSync } = require('node:child_process'); ['pnpm quality:shared-types','pnpm quality:frontend','pnpm quality:backend:test','pnpm quality:backend:build'].forEach((command) => execSync(command, { stdio: 'inherit' }));\"",
+    "quality:shared-types": "pnpm --filter @sms-saas/shared-types lint",
+    "quality:frontend": "pnpm --filter @sms-saas/frontend lint",
+    "quality:backend:test": "pnpm --filter @sms-saas/backend exec jest --runInBand",
+    "quality:backend:build": "pnpm --filter @sms-saas/backend build:vercel",
     "clean": "turbo run clean",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
   },
@@ -19,7 +24,7 @@
     "pnpm": ">=9.0.0"
   },
   "packageManager": "pnpm@9.15.0",
-  "description": "A monorepo-based, multi-tenant School Management SaaS built with **Next.js 14**, **NestJS**, **Prisma**, and **TypeScript**.",
+  "description": "A monorepo-based, multi-tenant School Management SaaS built with Next.js 15, React 19, NestJS, Prisma, and TypeScript.",
   "main": "fix-file.js",
   "dependencies": {
     "eslint": "^9.39.2",
