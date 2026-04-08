@@ -143,8 +143,8 @@ Phase 3 update:
 
 Files involved:
 
-- [README.md](/e:/SMS/SMS%20V2/sms-saas/README.md)
-- [package.json](/e:/SMS/SMS%20V2/sms-saas/apps/frontend/package.json)
+- [README.md](README.md)
+- [package.json](apps/frontend/package.json)
 
 ### Documentation Structure Was Missing
 
@@ -161,8 +161,8 @@ Current state:
 
 Files involved:
 
-- [page.tsx](/e:/SMS/SMS%20V2/sms-saas/apps/frontend/src/app/(auth)/forgot-password/page.tsx)
-- [users.controller.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/users/users.controller.ts)
+- [page.tsx](apps/frontend/src/app/(auth)/forgot-password/page.tsx)
+- [users.controller.ts](apps/backend/src/modules/users/users.controller.ts)
 
 ## Current Security Exceptions And Hardening Gaps
 
@@ -176,15 +176,16 @@ Current state:
 
 Files involved:
 
-- [app.module.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/app.module.ts)
-- [main.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/main.ts)
+- [app.module.ts](apps/backend/src/app.module.ts)
+- [main.ts](apps/backend/src/main.ts)
 
 Impact:
 
-- auth endpoints are now hardened first
-- broader API protection still needs a later staged rollout
+- throttling is currently limited to selected public auth routes and is not globally enforced
+- abuse and DoS risk remains for unthrottled endpoints, especially high-frequency anonymous or low-cost requests
+- interim protections in place today are route-level `ThrottlerGuard` + `@Throttle(...)`, JWT/campus/permission guards, and operational monitoring while global rollout is staged
 
-### Unscoped Prisma Access Exists In Security-Sensitive Paths
+### Unscoped Prisma Access Is A High-Risk Gap In Auth/Permission Flows
 
 Observed usage areas:
 
@@ -195,15 +196,23 @@ Observed usage areas:
 
 Key files:
 
-- [auth.service.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/auth/auth.service.ts)
-- [campus.guard.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/common/guards/campus.guard.ts)
-- [teachers.service.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/teachers/teachers.service.ts)
-- [parents.service.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/parents/parents.service.ts)
+- [auth.service.ts](apps/backend/src/modules/auth/auth.service.ts)
+- [campus.guard.ts](apps/backend/src/common/guards/campus.guard.ts)
+- [teachers.service.ts](apps/backend/src/modules/teachers/teachers.service.ts)
+- [parents.service.ts](apps/backend/src/modules/parents/parents.service.ts)
 
 Impact:
 
-- the currently known usages now have inline justification comments
-- the list should still be reviewed periodically as the codebase changes
+- cross-tenant data exposure is possible if scope checks regress or are bypassed
+- broad `findFirst`/`findMany`/`findUnique` patterns in privileged flows require stricter principal-scoped filtering
+
+Required fixes and verification:
+
+- replace unscoped Prisma model calls with explicit scoped queries (`tenantId`/`schoolId`, `campusId`, `userId`, or relation-bound filters) wherever a scoped delegate can be used
+- move broad lookup patterns into parameterized methods that require current principal context
+- enforce scope rejection in `CampusGuard.validate*` and `AuthService.verify*` paths before any state-changing operation proceeds
+- keep inline justification comments for any remaining intentional cross-tenant access and mark each for prioritized security review
+- add unit and integration tests to validate tenant boundaries for auth and permission-sensitive flows
 
 ### Raw SQL And Unsafe SQL Exist
 
@@ -215,14 +224,14 @@ Observed usage:
 
 Key files:
 
-- [health.controller.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/health/health.controller.ts)
-- [finance.service.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/finance/finance.service.ts)
-- [platform.service.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/platform/platform.service.ts)
+- [health.controller.ts](apps/backend/src/modules/health/health.controller.ts)
+- [finance.service.ts](apps/backend/src/modules/finance/finance.service.ts)
+- [platform.service.ts](apps/backend/src/modules/platform/platform.service.ts)
 
 Impact:
 
-- the currently known usages now have inline justification comments
-- unsafe raw SQL should still be reviewed first for future replacement opportunities
+- inline justification comments are required for each remaining raw/unsafe SQL path
+- each raw/unsafe SQL usage is prioritized for security review and replacement feasibility tracking
 
 ## Oversized Files And Modules
 
@@ -230,7 +239,7 @@ Impact:
 
 File:
 
-- [finance.service.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/finance/finance.service.ts)
+- [finance.service.ts](apps/backend/src/modules/finance/finance.service.ts)
 
 Current size:
 
@@ -244,7 +253,7 @@ Risk:
 
 File:
 
-- [platform.service.ts](/e:/SMS/SMS%20V2/sms-saas/apps/backend/src/modules/platform/platform.service.ts)
+- [platform.service.ts](apps/backend/src/modules/platform/platform.service.ts)
 
 Current size:
 

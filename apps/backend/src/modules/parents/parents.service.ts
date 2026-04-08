@@ -30,9 +30,9 @@ export class ParentsService {
     if (!parentRole) {
       // Parent bootstrap may need an unscoped role lookup before the user record
       // exists in tenant context, so this fallback is intentional.
-      parentRole = await (this.prisma as any).unscopedClient.role.findFirst({
+      parentRole = await this.prisma?.unscopedClient?.role?.findFirst?.({
         where: { slug: 'parent', schoolId },
-      })
+      }) ?? null
     }
     if (!parentRole) {
       throw new NotFoundException('Parent role not found. Please create a "parent" role first.')

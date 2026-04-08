@@ -31,8 +31,11 @@ Backend envs to populate first:
 - `JWT_REFRESH_SECRET`
 - `CORS_ORIGINS`
 - `GOOGLE_CLIENT_ID`
-- `SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_URL`
-- `SUPABASE_PUBLISHABLE_DEFAULT_KEY` or `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
+- `SUPABASE_URL` (backend/server `.env`; backend also supports `NEXT_PUBLIC_SUPABASE_URL` as a fallback)
+- `SUPABASE_ANON_KEY` (preferred backend/server key for Supabase client initialization)
+- `SUPABASE_PUBLISHABLE_DEFAULT_KEY` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` are legacy publishable-key names used in older setups
+- if browser code needs Supabase values, set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` in frontend public envs
+- if both backend and frontend use Supabase, set both server and client env pairs (`SUPABASE_URL` + `SUPABASE_PUBLISHABLE_DEFAULT_KEY` and `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`) and remember publishable keys are public by design
 - `SUPABASE_SERVICE_ROLE_KEY`
 
 ## Database Setup
@@ -84,4 +87,5 @@ On some Windows setups, backend Jest runs are most reliable with `--runInBand`, 
 - `api/index.js` loads `dist/vercel.js`
 - the serverless function still requires working database TLS and env configuration at runtime
 - for Supabase on Vercel, use the transaction pooler URL for `DATABASE_URL` and the direct host for `DIRECT_DATABASE_URL`
-- if the pooled Supabase URL uses port `6543`, include `pgbouncer=true`
+- for transaction-pooler `DATABASE_URL` values (typically port `6543`), add `pgbouncer=true` as a query parameter by appending `?pgbouncer=true` or `&pgbouncer=true` if other query params already exist
+- keep `DIRECT_DATABASE_URL` pointed at the direct database host and do not add `pgbouncer=true` to `DIRECT_DATABASE_URL`

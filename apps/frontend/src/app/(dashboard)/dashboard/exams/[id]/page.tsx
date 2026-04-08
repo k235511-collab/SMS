@@ -153,7 +153,6 @@ export default function ExamDetailPage() {
 
   const fetchTeachers = useCallback(async () => {
     if (user?.teacherId) {
-      setTeachers([])
       return
     }
 
@@ -161,7 +160,7 @@ export default function ExamDetailPage() {
     if (res.success && res.data) {
       setTeachers(res.data.data || [])
     }
-  }, [selectedCampus?.id, user?.teacherId])
+  }, [user?.teacherId])
 
   const fetchGradingScales = useCallback(async () => {
     const res = await api.get<GradingScale[]>('/exams/grading-scales')
@@ -518,11 +517,13 @@ export default function ExamDetailPage() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Assigned Teachers</CardTitle>
-                <PermissionGate permission="exams:update">
-                  <Button onClick={() => setTeacherDialogOpen(true)}>
-                    <UserPlus className="mr-2 h-4 w-4" /> Assign Teacher
-                  </Button>
-                </PermissionGate>
+                {!user?.teacherId && (
+                  <PermissionGate permission="exams:update">
+                    <Button onClick={() => setTeacherDialogOpen(true)}>
+                      <UserPlus className="mr-2 h-4 w-4" /> Assign Teacher
+                    </Button>
+                  </PermissionGate>
+                )}
               </CardHeader>
               <CardBody>
                 {exam.examTeachers && exam.examTeachers.length > 0 ? (

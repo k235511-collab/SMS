@@ -99,7 +99,7 @@ export class TeachersService {
         if (!teacherRole) {
           // Default role lookup is intentionally unscoped here because the tenant
           // extension may reject role discovery before creation completes.
-          teacherRole = await (this.prisma as any).unscopedClient.role.findFirst({
+          teacherRole = await this.prisma.unscopedClient.role.findFirst({
             where: { slug: 'teacher', schoolId },
           })
         }

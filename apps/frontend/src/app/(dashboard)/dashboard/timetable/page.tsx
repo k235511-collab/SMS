@@ -282,16 +282,15 @@ export default function TimetablePage() {
             })
           } else if (ctId) {
             // If we only have the ID, try to fetch class details specifically with sections
-            api.get<any>(`/academics/classes/${ctId}`, { params: { include: 'sections' } }).then(res => {
-              if (res.success && res.data) {
-                const cls = res.data.data || res.data
-                setClasses(prev => {
-                  if (!prev.some(c => c.id === cls.id)) return [...prev, cls]
-                  // If it already exists but doesn't have sections, update it
-                  return prev.map(c => c.id === cls.id ? { ...c, ...cls } : c)
-                })
-              }
-            })
+            const res = await api.get<any>(`/academics/classes/${ctId}`, { params: { include: 'sections' } })
+            if (res.success && res.data) {
+              const cls = res.data.data || res.data
+              setClasses(prev => {
+                if (!prev.some(c => c.id === cls.id)) return [...prev, cls]
+                // If it already exists but doesn't have sections, update it
+                return prev.map(c => c.id === cls.id ? { ...c, ...cls } : c)
+              })
+            }
           }
         }
       }

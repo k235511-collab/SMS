@@ -64,6 +64,8 @@ export class AssignmentsController {
 
     @Patch('submissions/:id/grade')
     @ApiOperation({ summary: 'Grade a submission' })
+    @RequirePermission(Permission.UPDATE_ASSIGNMENT)
+    // Defense-in-depth: SubmissionsService.grade additionally enforces teacher scope.
     grade(@Param('id') id: string, @TenantId() schoolId: string, @Body() dto: GradeSubmissionDto, @TeacherId() teacherId?: string | null) {
         return this.submissionsService.grade(id, schoolId, dto, teacherId)
     }

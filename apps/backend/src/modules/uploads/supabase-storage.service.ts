@@ -34,12 +34,6 @@ export class SupabaseStorageService {
   }
 
   async uploadFile(file: Express.Multer.File, bucket: string, folder: string): Promise<string> {
-    if (!this.supabase) {
-      throw new Error(
-        'Supabase client not initialized. Please ensure SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL and a valid Supabase key are set.',
-      )
-    }
-
     const fileExt = file.originalname.split('.').pop()
     const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`
     const path = folder ? `${folder}/${fileName}` : fileName
@@ -69,12 +63,6 @@ export class SupabaseStorageService {
   }
 
   async deleteFile(bucket: string, path: string): Promise<void> {
-    if (!this.supabase) {
-      throw new Error(
-        'Supabase client not initialized. Please ensure SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL and a valid Supabase key are set.',
-      )
-    }
-
     this.logger.log(`Deleting file from bucket ${bucket}, path ${path}`)
 
     const { error } = await this.supabase.storage

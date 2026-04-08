@@ -37,7 +37,7 @@ This is the working plan for strengthening the repo in six phases:
 
 ### Phase 4
 
-- re-enable throttling safely
+- re-enable throttling safely (Phase 1 baseline must explicitly track current throttling status, abuse/DoS risk, and interim protections)
 - document intentional unscoped and raw SQL paths
 - add security-focused regression coverage
 
@@ -49,4 +49,4 @@ This is the working plan for strengthening the repo in six phases:
 ### Phase 6
 
 - add PR checklist and contribution expectations
-- keep merge-blocking quality checks in place
+- maintain and enhance existing merge-blocking quality checks, while keeping them repeatable locally and in CI as defined in Phase 2

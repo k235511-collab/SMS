@@ -10,13 +10,49 @@ import helmet from 'helmet'
 import compression from 'compression'
 import { AppModule } from './app.module'
 
+function normalizeOrigin(value: string): string {
+  const trimmed = value.trim()
+  const unquoted = trimmed.replace(/^['"]|['"]$/g, '')
+  return unquoted.endsWith('/') ? unquoted.slice(0, -1) : unquoted
+}
+
 function parseCorsOrigins(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    // Normalize common mistakes like trailing slash
-    .map((s) => (s.endsWith('/') ? s.slice(0, -1) : s))
-    .filter(Boolean)
+  if (!value) return []
+
+  const trimmed = value.trim()
+  let rawOrigins: string[] = []
+
+  // Allow JSON array input from env managers that store list values as JSON.
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) {
+        rawOrigins = parsed.map((entry) => String(entry))
+      }
+    } catch {
+      rawOrigins = []
+    }
+  }
+
+  if (rawOrigins.length === 0) {
+    rawOrigins = trimmed.split(',')
+  }
+
+  return rawOrigins.map(normalizeOrigin).filter(Boolean)
+}
+
+function isOriginAllowed(origin: string, allowedOrigins: string[]): boolean {
+  return allowedOrigins.some((allowed) => {
+    if (!allowed.includes('*')) {
+      return allowed === origin
+    }
+
+    const pattern = allowed
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*')
+
+    return new RegExp(`^${pattern}$`).test(origin)
+  })
 }
 
 async function bootstrap() {
@@ -30,9 +66,14 @@ async function bootstrap() {
   app.enableShutdownHooks()
 
   // CORS — must be before helmet so preflight OPTIONS responses work
-  const allowedOrigins = parseCorsOrigins(
-    configService.get<string>('CORS_ORIGINS', process.env.CORS_ORIGINS || ''),
-  )
+  const allowedOrigins = [
+    ...parseCorsOrigins(
+      configService.get<string>('CORS_ORIGINS', process.env.CORS_ORIGINS || ''),
+    ),
+    ...[process.env.FRONTEND_URL, process.env.NEXT_PUBLIC_APP_URL]
+      .filter(Boolean)
+      .map((origin) => normalizeOrigin(origin as string)),
+  ]
   logger.log(
     `CORS origins: ${allowedOrigins.length ? allowedOrigins.join(', ') : '(none)'}`,
   )
@@ -40,8 +81,14 @@ async function bootstrap() {
     origin: (origin, cb) => {
       // Allow non-browser requests (no Origin header)
       if (!origin) return cb(null, true)
-      const normalized = origin.endsWith('/') ? origin.slice(0, -1) : origin
-      return cb(null, allowedOrigins.includes(normalized))
+      const normalized = normalizeOrigin(origin)
+      const allowed = isOriginAllowed(normalized, allowedOrigins)
+
+      if (!allowed) {
+        logger.warn(`CORS blocked origin: ${normalized}`)
+      }
+
+      return cb(null, allowed)
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

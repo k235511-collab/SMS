@@ -139579,10 +139579,13 @@ exports.AppModule = AppModule = __decorate([
                 serveRoot: '/',
             }),
             // Rate limiting
-            throttler_1.ThrottlerModule.forRoot({
-                ttl: parseInt(process.env.THROTTLE_TTL || '60', 10) * 1000,
-                limit: parseInt(process.env.THROTTLE_LIMIT || '100', 10),
-            }),
+            throttler_1.ThrottlerModule.forRoot([
+                {
+                    name: 'default',
+                    ttl: parseInt(process.env.THROTTLE_TTL || '60', 10) * 1000,
+                    limit: parseInt(process.env.THROTTLE_LIMIT || '100', 10),
+                },
+            ]),
             // Database
             prisma_module_1.PrismaModule,
             // Global modules
@@ -140781,22 +140784,24 @@ exports.jwtConfig = (0, register_as_1.registerAs)('jwt', {
 });
 exports.supabaseConfig = (0, config_1.registerAs)('supabase', () => {
     const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.SUPABASE_PUBLISHABLE_DEFAULT_KEY ||
-        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY;
+    const key = process.env.SUPABASE_ANON_KEY ||
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const bucket = process.env.SUPABASE_BUCKET || 'uploads';
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const missing = [];
     if (!url)
         missing.push('SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL');
     if (!key) {
-        missing.push('SUPABASE_PUBLISHABLE_DEFAULT_KEY or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY');
+        missing.push('SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY');
     }
     if (missing.length > 0) {
         throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
     }
+    const validatedUrl = url;
+    const validatedKey = key;
     return {
-        url,
-        key,
+        url: validatedUrl,
+        key: validatedKey,
         bucket,
         serviceRoleKey,
     };
@@ -142796,8 +142801,8 @@ let AssignmentsController = class AssignmentsController {
     findAll(schoolId, classId, subjectId, campusId, teacherId) {
         return this.assignmentsService.findAll(schoolId, { classId, subjectId }, campusId, teacherId);
     }
-    findOne(id, schoolId) {
-        return this.assignmentsService.findById(id, schoolId);
+    findOne(id, schoolId, teacherId) {
+        return this.assignmentsService.findById(id, schoolId, teacherId);
     }
     update(id, schoolId, dto, teacherId) {
         return this.assignmentsService.update(id, schoolId, dto, teacherId);
@@ -142809,11 +142814,12 @@ let AssignmentsController = class AssignmentsController {
     submit(schoolId, dto) {
         return this.submissionsService.submit(schoolId, dto);
     }
-    grade(id, schoolId, dto) {
-        return this.submissionsService.grade(id, schoolId, dto);
+    // Defense-in-depth: SubmissionsService.grade additionally enforces teacher scope.
+    grade(id, schoolId, dto, teacherId) {
+        return this.submissionsService.grade(id, schoolId, dto, teacherId);
     }
-    getSubmissions(assignmentId, schoolId) {
-        return this.submissionsService.findByAssignment(assignmentId, schoolId);
+    getSubmissions(assignmentId, schoolId, teacherId) {
+        return this.submissionsService.findByAssignment(assignmentId, schoolId, teacherId);
     }
 };
 exports.AssignmentsController = AssignmentsController;
@@ -142847,8 +142853,9 @@ __decorate([
     (0, decorators_1.RequirePermission)(constants_1.Permission.READ_ASSIGNMENT),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, decorators_1.TenantId)()),
+    __param(2, (0, decorators_1.TeacherId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [String, String, Object]),
     __metadata("design:returntype", void 0)
 ], AssignmentsController.prototype, "findOne", null);
 __decorate([
@@ -142887,11 +142894,15 @@ __decorate([
 __decorate([
     (0, common_1.Patch)('submissions/:id/grade'),
     (0, swagger_1.ApiOperation)({ summary: 'Grade a submission' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.UPDATE_ASSIGNMENT)
+    // Defense-in-depth: SubmissionsService.grade additionally enforces teacher scope.
+    ,
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, decorators_1.TenantId)()),
     __param(2, (0, common_1.Body)()),
+    __param(3, (0, decorators_1.TeacherId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, typeof (_f = typeof dto_1.GradeSubmissionDto !== "undefined" && dto_1.GradeSubmissionDto) === "function" ? _f : Object]),
+    __metadata("design:paramtypes", [String, String, typeof (_f = typeof dto_1.GradeSubmissionDto !== "undefined" && dto_1.GradeSubmissionDto) === "function" ? _f : Object, Object]),
     __metadata("design:returntype", void 0)
 ], AssignmentsController.prototype, "grade", null);
 __decorate([
@@ -142899,8 +142910,9 @@ __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'List submissions for an assignment' }),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, decorators_1.TenantId)()),
+    __param(2, (0, decorators_1.TeacherId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [String, String, Object]),
     __metadata("design:returntype", void 0)
 ], AssignmentsController.prototype, "getSubmissions", null);
 exports.AssignmentsController = AssignmentsController = __decorate([
@@ -142977,6 +142989,9 @@ let AssignmentsService = class AssignmentsService {
     async getTeacherScope(teacherId, schoolId) {
         return this.teacherScope.getScope(teacherId, schoolId);
     }
+    async getTeacherAssignmentAccessConditions(teacherId, schoolId) {
+        return this.teacherScope.getAssignmentAccessConditions(teacherId, schoolId);
+    }
     async create(schoolId, dto, teacherId) {
         if (teacherId) {
             // Prevent spoofing: always use JWT teacherId, ignore dto.teacherId
@@ -142994,15 +143009,18 @@ let AssignmentsService = class AssignmentsService {
     async findAll(schoolId, query, campusId, teacherId) {
         const where = { schoolId };
         if (teacherId) {
-            const scope = await this.getTeacherScope(teacherId, schoolId);
-            if (scope.classIds.length === 0)
+            const conditions = await this.getTeacherAssignmentAccessConditions(teacherId, schoolId);
+            if (conditions.length === 0) {
                 return { data: [], total: 0, page: query.page ?? 1, pageSize: query.pageSize ?? 20, totalPages: 0 };
-            where.classId = { in: scope.classIds };
+            }
+            where.AND = [{ OR: conditions }];
         }
-        if (query.classId)
-            where.classId = query.classId;
-        if (query.subjectId)
-            where.subjectId = query.subjectId;
+        if (query.classId) {
+            where.AND = [...(where.AND || []), { classId: query.classId }];
+        }
+        if (query.subjectId) {
+            where.AND = [...(where.AND || []), { subjectId: query.subjectId }];
+        }
         if (campusId)
             where.class = { ...where.class, campusId };
         const page = query.page ?? 1;
@@ -143019,17 +143037,23 @@ let AssignmentsService = class AssignmentsService {
         ]);
         return { data, total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
     }
-    async findById(id, schoolId) {
+    async findById(id, schoolId, teacherId) {
         const assignment = await this.prisma.assignment.findFirst({
             where: { id, schoolId },
             include: { class: true, subject: true, teacher: true, submissions: { include: { student: true } } },
         });
         if (!assignment)
             throw new common_1.NotFoundException(`Assignment "${id}" not found`);
+        if (teacherId) {
+            await this.teacherScope.validateFullAccess(teacherId, schoolId, {
+                classId: assignment.classId,
+                subjectId: assignment.subjectId,
+            });
+        }
         return assignment;
     }
     async update(id, schoolId, dto, teacherId) {
-        const assignment = await this.findById(id, schoolId);
+        const assignment = await this.findById(id, schoolId, teacherId);
         // Teacher scope: can only update their own assignments
         if (teacherId) {
             if (assignment.teacherId && assignment.teacherId !== teacherId) {
@@ -143046,7 +143070,7 @@ let AssignmentsService = class AssignmentsService {
         return this.prisma.assignment.update({ where: { id }, data, include: { class: true, subject: true } });
     }
     async remove(id, schoolId, teacherId) {
-        const assignment = await this.findById(id, schoolId);
+        const assignment = await this.findById(id, schoolId, teacherId);
         // Teacher scope: can only delete their own assignments + validate scope
         if (teacherId) {
             if (assignment.teacherId && assignment.teacherId !== teacherId) {
@@ -143273,15 +143297,32 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var _a;
+var _a, _b;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SubmissionsService = void 0;
 const common_1 = __webpack_require__(47305);
 const prisma_service_1 = __webpack_require__(29105);
+const teacher_scope_service_1 = __webpack_require__(49385);
 let SubmissionsService = class SubmissionsService {
     prisma;
-    constructor(prisma) {
+    teacherScope;
+    constructor(prisma, teacherScope) {
         this.prisma = prisma;
+        this.teacherScope = teacherScope;
+    }
+    async validateTeacherAssignmentAccess(teacherId, schoolId, assignmentId) {
+        const assignment = await this.prisma.assignment.findFirst({
+            where: { id: assignmentId, schoolId },
+            select: { id: true, classId: true, subjectId: true },
+        });
+        if (!assignment) {
+            throw new common_1.NotFoundException(`Assignment "${assignmentId}" not found`);
+        }
+        await this.teacherScope.validateFullAccess(teacherId, schoolId, {
+            classId: assignment.classId,
+            subjectId: assignment.subjectId,
+        });
+        return assignment;
     }
     async submit(schoolId, dto) {
         return this.prisma.submission.create({
@@ -143289,17 +143330,26 @@ let SubmissionsService = class SubmissionsService {
             include: { student: true, assignment: true },
         });
     }
-    async grade(id, schoolId, dto) {
-        const submission = await this.prisma.submission.findFirst({ where: { id, schoolId } });
+    async grade(id, schoolId, dto, teacherId) {
+        const submission = await this.prisma.submission.findFirst({
+            where: { id, schoolId },
+            select: { id: true, assignmentId: true },
+        });
         if (!submission)
             throw new common_1.NotFoundException(`Submission "${id}" not found`);
+        if (teacherId) {
+            await this.validateTeacherAssignmentAccess(teacherId, schoolId, submission.assignmentId);
+        }
         return this.prisma.submission.update({
             where: { id },
             data: { marks: dto.marks, grade: dto.grade, feedback: dto.feedback, status: 'GRADED', gradedAt: new Date() },
             include: { student: true, assignment: true },
         });
     }
-    async findByAssignment(assignmentId, schoolId) {
+    async findByAssignment(assignmentId, schoolId, teacherId) {
+        if (teacherId) {
+            await this.validateTeacherAssignmentAccess(teacherId, schoolId, assignmentId);
+        }
         return this.prisma.submission.findMany({
             where: { assignmentId, schoolId },
             include: { student: true },
@@ -143317,7 +143367,7 @@ let SubmissionsService = class SubmissionsService {
 exports.SubmissionsService = SubmissionsService;
 exports.SubmissionsService = SubmissionsService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object])
+    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof teacher_scope_service_1.TeacherScopeService !== "undefined" && teacher_scope_service_1.TeacherScopeService) === "function" ? _b : Object])
 ], SubmissionsService);
 
 
@@ -143516,6 +143566,18 @@ let AttendanceService = class AttendanceService {
     async getTeacherScope(teacherId, schoolId) {
         return this.teacherScopeService.getScope(teacherId, schoolId);
     }
+    async validateTeacherAttendanceReadAccess(teacherId, schoolId, sectionId) {
+        const section = await this.prisma.section.findFirst({
+            where: { id: sectionId, schoolId },
+            select: { id: true, classId: true },
+        });
+        if (!section) {
+            throw new common_1.NotFoundException(`Section with ID "${sectionId}" not found`);
+        }
+        await this.teacherScopeService.validateClassTeacherAccess(teacherId, schoolId, section.classId);
+        await this.teacherScopeService.validateSectionAccess(teacherId, schoolId, sectionId);
+        return section;
+    }
     async markAttendance(schoolId, dto, teacherId) {
         // Teacher validation: only class teachers can mark attendance
         if (teacherId) {
@@ -143575,20 +143637,23 @@ let AttendanceService = class AttendanceService {
         // Teacher scope: only show attendance for assigned sections/classes
         if (teacherId) {
             const scope = await this.getTeacherScope(teacherId, schoolId);
-            if (scope.sectionIds.length > 0) {
-                where.sectionId = { in: scope.sectionIds };
-                // Teacher can further filter within their own scope
-                if (query.sectionId && scope.sectionIds.includes(query.sectionId)) {
-                    where.sectionId = query.sectionId;
-                }
-            }
-            else if (scope.classIds.length > 0) {
-                where.student = { classId: { in: scope.classIds } };
-                if (query.sectionId)
-                    where.sectionId = query.sectionId;
-            }
-            else {
+            if (!scope.classTeacherOfId) {
                 return new dto_1.PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20);
+            }
+            const classTeacherSections = await this.prisma.section.findMany({
+                where: { schoolId, classId: scope.classTeacherOfId },
+                select: { id: true },
+            });
+            const allowedSectionIds = classTeacherSections.map((section) => section.id);
+            if (allowedSectionIds.length === 0) {
+                return new dto_1.PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20);
+            }
+            where.sectionId = { in: allowedSectionIds };
+            if (query.sectionId) {
+                if (!allowedSectionIds.includes(query.sectionId)) {
+                    return new dto_1.PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20);
+                }
+                where.sectionId = query.sectionId;
             }
         }
         else {
@@ -143632,10 +143697,8 @@ let AttendanceService = class AttendanceService {
         // Teacher scope: can only view students in their assigned sections/classes
         if (teacherId) {
             const scope = await this.getTeacherScope(teacherId, schoolId);
-            const inSection = student.sectionId && scope.sectionIds.includes(student.sectionId);
-            const inClass = student.classId && scope.classIds.includes(student.classId);
-            if (!inSection && !inClass) {
-                throw new common_1.ForbiddenException('You are not assigned to this student\'s class or section');
+            if (!scope.classTeacherOfId || student.classId !== scope.classTeacherOfId) {
+                throw new common_1.ForbiddenException('Only the class teacher can view attendance for this student');
             }
         }
         const where = { studentId, schoolId };
@@ -143660,7 +143723,7 @@ let AttendanceService = class AttendanceService {
     async getReport(schoolId, sectionId, startDate, endDate, teacherId) {
         // Teacher scope: can only view reports for assigned sections
         if (teacherId) {
-            await this.teacherScopeService.validateSectionAccess(teacherId, schoolId, sectionId);
+            await this.validateTeacherAttendanceReadAccess(teacherId, schoolId, sectionId);
         }
         const [students, attendances] = await Promise.all([
             this.prisma.student.findMany({
@@ -143722,7 +143785,7 @@ let AttendanceService = class AttendanceService {
     async getSectionStudents(schoolId, sectionId, teacherId) {
         // Teacher scope: can only view students in assigned sections
         if (teacherId) {
-            await this.teacherScopeService.validateSectionAccess(teacherId, schoolId, sectionId);
+            await this.validateTeacherAttendanceReadAccess(teacherId, schoolId, sectionId);
         }
         return this.prisma.student.findMany({
             where: { sectionId, schoolId, status: 'ACTIVE', deletedAt: null },
@@ -153010,9 +153073,9 @@ let ParentsService = class ParentsService {
         if (!parentRole) {
             // Parent bootstrap may need an unscoped role lookup before the user record
             // exists in tenant context, so this fallback is intentional.
-            parentRole = await this.prisma.unscopedClient.role.findFirst({
+            parentRole = await this.prisma?.unscopedClient?.role?.findFirst?.({
                 where: { slug: 'parent', schoolId },
-            });
+            }) ?? null;
         }
         if (!parentRole) {
             throw new common_1.NotFoundException('Parent role not found. Please create a "parent" role first.');
@@ -159156,6 +159219,29 @@ let TeacherScopeService = class TeacherScopeService {
             return true;
         });
     }
+    async getAssignmentAccessConditions(teacherId, schoolId, academicYearId) {
+        const { assignments, classTeacherOfId } = await this.getResolvedAssignments(teacherId, schoolId, academicYearId);
+        const conditions = [];
+        if (classTeacherOfId) {
+            conditions.push({ classId: classTeacherOfId });
+        }
+        for (const assignment of assignments) {
+            const condition = { classId: assignment.classId };
+            if (assignment.subjectId) {
+                condition.subjectId = assignment.subjectId;
+            }
+            conditions.push(condition);
+        }
+        const seen = new Set();
+        return conditions.filter((condition) => {
+            const key = JSON.stringify(condition);
+            if (seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+    }
     /**
      * Resolve all classIds, sectionIds, and subjectIds assigned to a teacher.
      * Only returns active assignments.
@@ -160598,18 +160684,18 @@ let TimetableController = class TimetableController {
     findFreeTeachers(schoolId, dayOfWeek, startTime, endTime, campusId) {
         return this.service.findFreeTeachers(schoolId, parseInt(dayOfWeek), startTime, endTime, campusId);
     }
-    getTeacherSchedule(teacherId, schoolId) {
-        return this.service.getTeacherSchedule(teacherId, schoolId);
+    getTeacherSchedule(teacherId, schoolId, requesterTeacherId) {
+        return this.service.getTeacherSchedule(teacherId, schoolId, requesterTeacherId);
     }
     // ─── Timetable Slot Routes ────────────────────────────────────────────────
     create(schoolId, dto, campusId) {
         return this.service.create(schoolId, dto, campusId);
     }
-    findBySection(sectionId, schoolId) {
-        return this.service.findBySection(sectionId, schoolId);
+    findBySection(sectionId, schoolId, requesterTeacherId) {
+        return this.service.findBySection(sectionId, schoolId, requesterTeacherId);
     }
-    findByTeacher(teacherId, schoolId) {
-        return this.service.findByTeacher(teacherId, schoolId);
+    findByTeacher(teacherId, schoolId, requesterTeacherId) {
+        return this.service.findByTeacher(teacherId, schoolId, requesterTeacherId);
     }
     update(id, schoolId, dto, campusId) {
         return this.service.update(id, schoolId, dto, campusId);
@@ -160694,8 +160780,9 @@ __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Get full weekly schedule for a teacher' }),
     __param(0, (0, common_1.Param)('teacherId')),
     __param(1, (0, decorators_1.TenantId)()),
+    __param(2, (0, decorators_1.TeacherId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [String, String, Object]),
     __metadata("design:returntype", void 0)
 ], TimetableController.prototype, "getTeacherSchedule", null);
 __decorate([
@@ -160717,8 +160804,9 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 200, description: 'Section timetable' }),
     __param(0, (0, common_1.Param)('sectionId')),
     __param(1, (0, decorators_1.TenantId)()),
+    __param(2, (0, decorators_1.TeacherId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [String, String, Object]),
     __metadata("design:returntype", void 0)
 ], TimetableController.prototype, "findBySection", null);
 __decorate([
@@ -160728,8 +160816,9 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 200, description: 'Teacher timetable' }),
     __param(0, (0, common_1.Param)('teacherId')),
     __param(1, (0, decorators_1.TenantId)()),
+    __param(2, (0, decorators_1.TeacherId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [String, String, Object]),
     __metadata("design:returntype", void 0)
 ], TimetableController.prototype, "findByTeacher", null);
 __decorate([
@@ -160784,11 +160873,13 @@ exports.TimetableModule = void 0;
 const common_1 = __webpack_require__(47305);
 const timetable_controller_1 = __webpack_require__(6608);
 const timetable_service_1 = __webpack_require__(3965);
+const teachers_module_1 = __webpack_require__(67791);
 let TimetableModule = class TimetableModule {
 };
 exports.TimetableModule = TimetableModule;
 exports.TimetableModule = TimetableModule = __decorate([
     (0, common_1.Module)({
+        imports: [teachers_module_1.TeachersModule],
         controllers: [timetable_controller_1.TimetableController],
         providers: [timetable_service_1.TimetableService],
         exports: [timetable_service_1.TimetableService],
@@ -160812,15 +160903,32 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var _a;
+var _a, _b;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TimetableService = void 0;
 const common_1 = __webpack_require__(47305);
 const prisma_service_1 = __webpack_require__(29105);
+const teacher_scope_service_1 = __webpack_require__(49385);
 let TimetableService = class TimetableService {
     prisma;
-    constructor(prisma) {
+    teacherScope;
+    constructor(prisma, teacherScope) {
         this.prisma = prisma;
+        this.teacherScope = teacherScope;
+    }
+    async validateTeacherSectionReadAccess(requesterTeacherId, schoolId, sectionId) {
+        if (!requesterTeacherId) {
+            return;
+        }
+        await this.teacherScope.validateSectionAccess(requesterTeacherId, schoolId, sectionId);
+    }
+    validateTeacherScheduleReadAccess(requesterTeacherId, targetTeacherId) {
+        if (!requesterTeacherId) {
+            return;
+        }
+        if (requesterTeacherId !== targetTeacherId) {
+            throw new common_1.ForbiddenException('Teachers can only view their own timetable');
+        }
     }
     async resolveAcademicYearId(schoolId, options) {
         const { providedAcademicYearId } = options;
@@ -160921,7 +161029,8 @@ let TimetableService = class TimetableService {
             },
         });
     }
-    async findBySection(sectionId, schoolId) {
+    async findBySection(sectionId, schoolId, requesterTeacherId) {
+        await this.validateTeacherSectionReadAccess(requesterTeacherId, schoolId, sectionId);
         return this.prisma.timetableSlot.findMany({
             where: { sectionId, schoolId },
             include: {
@@ -160931,7 +161040,8 @@ let TimetableService = class TimetableService {
             orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
         });
     }
-    async findByTeacher(teacherId, schoolId) {
+    async findByTeacher(teacherId, schoolId, requesterTeacherId) {
+        this.validateTeacherScheduleReadAccess(requesterTeacherId, teacherId);
         return this.prisma.timetableSlot.findMany({
             where: { teacherId, schoolId },
             include: {
@@ -161027,7 +161137,8 @@ let TimetableService = class TimetableService {
     /**
      * Returns a teacher's full weekly schedule with all slots and free periods.
      */
-    async getTeacherSchedule(teacherId, schoolId) {
+    async getTeacherSchedule(teacherId, schoolId, requesterTeacherId) {
+        this.validateTeacherScheduleReadAccess(requesterTeacherId, teacherId);
         const teacher = await this.prisma.teacher.findFirst({
             where: { id: teacherId, schoolId },
             select: { id: true, firstName: true, lastName: true, employeeId: true },
@@ -161155,7 +161266,7 @@ let TimetableService = class TimetableService {
 exports.TimetableService = TimetableService;
 exports.TimetableService = TimetableService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object])
+    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof teacher_scope_service_1.TeacherScopeService !== "undefined" && teacher_scope_service_1.TeacherScopeService) === "function" ? _b : Object])
 ], TimetableService);
 
 
@@ -161209,9 +161320,6 @@ let SupabaseStorageService = SupabaseStorageService_1 = class SupabaseStorageSer
         this.supabase = (0, supabase_js_1.createClient)(supabaseUrl, supabaseKey);
     }
     async uploadFile(file, bucket, folder) {
-        if (!this.supabase) {
-            throw new Error('Supabase client not initialized. Please ensure SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL and a valid Supabase key are set.');
-        }
         const fileExt = file.originalname.split('.').pop();
         const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`;
         const path = folder ? `${folder}/${fileName}` : fileName;
@@ -161235,9 +161343,6 @@ let SupabaseStorageService = SupabaseStorageService_1 = class SupabaseStorageSer
         return publicData.publicUrl;
     }
     async deleteFile(bucket, path) {
-        if (!this.supabase) {
-            throw new Error('Supabase client not initialized. Please ensure SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL and a valid Supabase key are set.');
-        }
         this.logger.log(`Deleting file from bucket ${bucket}, path ${path}`);
         const { error } = await this.supabase.storage
             .from(bucket)
@@ -162494,12 +162599,43 @@ const database_url_utils_1 = __webpack_require__(91400);
 // Use require for express to avoid pnpm resolution issues
 const express = __webpack_require__(15711);
 let cachedServer;
+function normalizeOrigin(value) {
+    const trimmed = value.trim();
+    const unquoted = trimmed.replace(/^['"]|['"]$/g, '');
+    return unquoted.endsWith('/') ? unquoted.slice(0, -1) : unquoted;
+}
 function parseCorsOrigins(value) {
-    return (value ?? '')
-        .split(',')
-        .map((s) => s.trim())
-        .map((s) => (s.endsWith('/') ? s.slice(0, -1) : s))
-        .filter(Boolean);
+    if (!value)
+        return [];
+    const trimmed = value.trim();
+    let rawOrigins = [];
+    // Allow JSON array input from env managers that store list values as JSON.
+    if (trimmed.startsWith('[')) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+                rawOrigins = parsed.map((entry) => String(entry));
+            }
+        }
+        catch {
+            rawOrigins = [];
+        }
+    }
+    if (rawOrigins.length === 0) {
+        rawOrigins = trimmed.split(',');
+    }
+    return rawOrigins.map(normalizeOrigin).filter(Boolean);
+}
+function isOriginAllowed(origin, allowedOrigins) {
+    return allowedOrigins.some((allowed) => {
+        if (!allowed.includes('*')) {
+            return allowed === origin;
+        }
+        const pattern = allowed
+            .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*/g, '.*');
+        return new RegExp(`^${pattern}$`).test(origin);
+    });
 }
 async function bootstrap() {
     if (!cachedServer) {
@@ -162512,18 +162648,35 @@ async function bootstrap() {
             logger.warn(`[database-config] ${warning}`);
         }
         // Keep serverless bootstrap behavior aligned with main.ts.
-        const allowedOrigins = parseCorsOrigins(configService.get('CORS_ORIGINS', 'http://localhost:3000'));
+        const allowedOrigins = [
+            ...parseCorsOrigins(configService.get('CORS_ORIGINS', process.env.CORS_ORIGINS || 'http://localhost:3000')),
+            ...[process.env.FRONTEND_URL, process.env.NEXT_PUBLIC_APP_URL]
+                .filter(Boolean)
+                .map((origin) => normalizeOrigin(origin)),
+        ];
         const isDev = configService.get('NODE_ENV', 'development') === 'development';
         logger.log(`CORS origins: ${allowedOrigins.length ? allowedOrigins.join(', ') : '(none)'}`);
         app.enableCors({
             origin: (origin, cb) => {
                 if (!origin)
                     return cb(null, true);
-                const normalized = origin.endsWith('/') ? origin.slice(0, -1) : origin;
-                if (isDev && (normalized.includes('localhost') || normalized.includes('127.0.0.1'))) {
-                    return cb(null, true);
+                const normalized = normalizeOrigin(origin);
+                if (isDev) {
+                    try {
+                        const { hostname } = new URL(normalized);
+                        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+                            return cb(null, true);
+                        }
+                    }
+                    catch {
+                        return cb(null, false);
+                    }
                 }
-                return cb(null, allowedOrigins.includes(normalized));
+                const allowed = isOriginAllowed(normalized, allowedOrigins);
+                if (!allowed) {
+                    logger.warn(`CORS blocked origin: ${normalized}`);
+                }
+                return cb(null, allowed);
             },
             credentials: true,
             methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

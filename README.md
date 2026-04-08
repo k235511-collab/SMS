@@ -34,6 +34,8 @@ Fill in backend database, JWT, Google auth, CORS, and Supabase values before sta
 
 ### Database setup
 
+Create the PostgreSQL database first (for example `sms_saas_dev`) using `createdb` or `psql`, and use the appropriate database user/connection details for your local environment.
+
 ```bash
 cd apps/backend
 pnpm db:generate
