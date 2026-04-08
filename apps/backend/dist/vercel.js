@@ -140785,14 +140785,16 @@ exports.jwtConfig = (0, register_as_1.registerAs)('jwt', {
 exports.supabaseConfig = (0, config_1.registerAs)('supabase', () => {
     const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.SUPABASE_ANON_KEY ||
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+        process.env.SUPABASE_PUBLISHABLE_DEFAULT_KEY ||
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY;
     const bucket = process.env.SUPABASE_BUCKET || 'uploads';
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const missing = [];
     if (!url)
         missing.push('SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL');
     if (!key) {
-        missing.push('SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY');
+        missing.push('SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY (legacy fallback: SUPABASE_PUBLISHABLE_DEFAULT_KEY or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY)');
     }
     if (missing.length > 0) {
         throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
