@@ -15,7 +15,6 @@ describe('AttendanceService', () => {
   let teacherScopeService: {
     getScope: jest.Mock
     validateClassTeacherAccess: jest.Mock
-    validateSectionAccess: jest.Mock
   }
 
   beforeEach(async () => {
@@ -29,7 +28,6 @@ describe('AttendanceService', () => {
     teacherScopeService = {
       getScope: jest.fn(),
       validateClassTeacherAccess: jest.fn(),
-      validateSectionAccess: jest.fn(),
     }
 
     const module: TestingModule = await Test.createTestingModule({
@@ -49,6 +47,8 @@ describe('AttendanceService', () => {
       sectionIds: ['section-a'],
       subjectIds: ['subject-a'],
       classTeacherOfId: null,
+      classTeacherClassIds: [],
+      classTeacherSectionIds: [],
     })
 
     const result = await service.findAll(
@@ -72,10 +72,6 @@ describe('AttendanceService', () => {
       'teacher-1',
       'school-1',
       'class-a',
-    )
-    expect(teacherScopeService.validateSectionAccess).toHaveBeenCalledWith(
-      'teacher-1',
-      'school-1',
       'section-1',
     )
   })
@@ -91,6 +87,8 @@ describe('AttendanceService', () => {
       sectionIds: ['section-a'],
       subjectIds: ['subject-a'],
       classTeacherOfId: 'class-b',
+      classTeacherClassIds: ['class-b'],
+      classTeacherSectionIds: ['section-b'],
     })
 
     await expect(
