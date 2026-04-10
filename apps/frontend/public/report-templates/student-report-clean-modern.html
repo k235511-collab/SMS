@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Student Report Card - Clean Modern</title>
+  <style>
+    :root {
+      --ink: #1e2b45;
+      --line: #486190;
+      --soft: #eef3ff;
+      --panel: #f8faff;
+      --muted: #5f6f90;
+      --accent: #486190;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 10mm;
+      font-family: "Calibri", "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: #dde5f5;
+    }
+
+    .sheet {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 9mm;
+    }
+
+    .top {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 10px;
+      align-items: center;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--line);
+    }
+
+    .logo {
+      width: 72px;
+      height: 72px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      overflow: hidden;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .logo-fallback {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--accent);
+      background: var(--soft);
+    }
+
+    .school-name {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      line-height: 1.1;
+    }
+
+    .school-meta {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .title {
+      margin: 12px 0 0;
+      font-size: 18px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--accent);
+    }
+
+    .profile-grid {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .profile-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 8px;
+    }
+
+    .profile-item p {
+      margin: 0;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+    }
+
+    .profile-item strong {
+      display: block;
+      margin-top: 3px;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .attendance-strip {
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      overflow: hidden;
+    }
+
+    .attendance-strip div {
+      padding: 8px;
+      border-right: 1px solid var(--line);
+    }
+
+    .attendance-strip div:last-child { border-right: none; }
+
+    .attendance-strip p {
+      margin: 0;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .attendance-strip strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 15px;
+      color: var(--ink);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      table-layout: fixed;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 7px 6px;
+      font-size: 12px;
+      text-align: center;
+      background: var(--panel);
+    }
+
+    thead th {
+      background: var(--soft);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.25px;
+    }
+
+    .subject-name {
+      text-align: left;
+      font-weight: 600;
+      background: var(--panel);
+      white-space: nowrap;
+    }
+
+    .total-row td {
+      font-weight: 700;
+      background: var(--soft);
+    }
+
+    .empty-row {
+      text-align: center;
+      color: var(--muted);
+      padding: 16px 10px;
+    }
+
+    .lower {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .term-card,
+    .custom-block {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 8px;
+    }
+
+    .term-card h4,
+    .custom-block h4 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .term-card p,
+    .custom-block p {
+      margin: 3px 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--ink);
+    }
+
+    .term-note {
+      border-top: 1px dashed var(--line);
+      margin-top: 6px;
+      padding-top: 6px;
+      color: var(--muted);
+    }
+
+    .footer {
+      margin-top: 8px;
+      text-align: right;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    @media print {
+      body { padding: 0; background: #fff; }
+      .sheet { margin: 0; border: none; }
+    }
+  </style>
+</head>
+<body>
+  <section class="sheet">
+    <header class="top">
+      <div class="logo">{{SCHOOL_LOGO_BLOCK}}</div>
+      <div>
+        <h1 class="school-name">{{SCHOOL_NAME}}</h1>
+        <p class="school-meta">{{SCHOOL_CONTACT_LINE}}</p>
+        <p class="title">Student Report Card - {{ACADEMIC_YEAR}}</p>
+      </div>
+    </header>
+
+    <section class="profile-grid">
+      <div class="profile-item"><p>Student Name</p><strong>{{STUDENT_NAME}}</strong></div>
+      <div class="profile-item"><p>Roll Number</p><strong>{{ROLL_NUMBER}}</strong></div>
+      <div class="profile-item"><p>Class</p><strong>{{CLASS_NAME}}</strong></div>
+      <div class="profile-item"><p>Section</p><strong>{{SECTION_NAME}}</strong></div>
+      <div class="profile-item"><p>Guardian Name</p><strong>{{GUARDIAN_NAME}}</strong></div>
+      <div class="profile-item"><p>Guardian Phone</p><strong>{{GUARDIAN_PHONE}}</strong></div>
+      <div class="profile-item"><p>Guardian Email</p><strong>{{GUARDIAN_EMAIL}}</strong></div>
+      <div class="profile-item"><p>Enrollment Date</p><strong>{{ENROLLMENT_DATE}}</strong></div>
+    </section>
+
+    <section class="attendance-strip">
+      <div><p>Attendance Days</p><strong>{{ATTENDANCE_TOTAL}}</strong></div>
+      <div><p>Present Days</p><strong>{{ATTENDANCE_PRESENT}}</strong></div>
+      <div><p>Attendance %</p><strong>{{ATTENDANCE_PERCENT}}%</strong></div>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="2" style="width: 16%;">Subjects</th>
+          {{TERM_HEADER_CELLS}}
+        </tr>
+        <tr>
+          {{TERM_SUBHEADER_CELLS}}
+        </tr>
+      </thead>
+      <tbody>
+        {{SUBJECT_ROWS}}
+        <tr class="total-row">
+          <td>Total Marks</td>
+          {{TOTAL_ROW_CELLS}}
+        </tr>
+      </tbody>
+    </table>
+
+    <section class="lower">
+      {{TERM_SUMMARY_CARDS}}
+      {{CUSTOM_SECTIONS_HTML}}
+    </section>
+
+    <div class="footer">Generated on {{GENERATED_AT}}</div>
+  </section>
+</body>
+</html>

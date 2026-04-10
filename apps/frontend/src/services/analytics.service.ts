@@ -11,6 +11,13 @@ export const reportsService = {
     getAvailableReports: () => api.get<any>('/reports'),
     generateStudentReport: (studentId: string) => api.get<any>(`/reports/student/${studentId}`),
     generateClassReport: (classId: string) => api.get<any>(`/reports/class/${classId}`),
+    generateAttendanceReport: (sectionId: string, startDate: string, endDate: string) =>
+        api.get<any>('/reports/attendance', { params: { sectionId, startDate, endDate } }),
+    generateFinancialReport: (startDate?: string, endDate?: string) =>
+        api.get<any>('/reports/financial', { params: { startDate, endDate } }),
+    getStudentCardTemplates: () => api.get<any>('/reports/student-card-templates'),
+    saveStudentCardTemplate: (templateKey: string, payload: { htmlContent: string; templateName?: string; description?: string }) =>
+        api.put<any>(`/reports/student-card-templates/${templateKey}`, payload),
 }
 
 export const resourcesService = {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { ProtectedRoute } from '@/components/auth'
 import { Card, CardBody } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -9,8 +10,19 @@ import { FileText, Download, BarChart2, Users, GraduationCap, DollarSign } from 
 
 interface ReportType { type: string; name: string; description: string }
 
+interface ReportRouteMeta {
+    href: string
+}
+
 const iconMap: Record<string, any> = {
     student: Users, class: GraduationCap, attendance: BarChart2, finance: DollarSign,
+}
+
+const routeMap: Record<string, ReportRouteMeta> = {
+    student: { href: '/dashboard/reports/student-report-card' },
+    class: { href: '/dashboard/reports/class-report' },
+    attendance: { href: '/dashboard/reports/attendance-report' },
+    finance: { href: '/dashboard/reports/financial-report' },
 }
 
 export default function ReportsPage() {
@@ -57,8 +69,10 @@ export default function ReportsPage() {
                                         <div className="flex-1">
                                             <h3 className="font-semibold text-foreground">{report.name}</h3>
                                             <p className="text-sm text-muted-foreground mt-1">{report.description}</p>
-                                            <Button variant="outline" size="sm" className="mt-3">
-                                                <Download className="mr-2 h-3 w-3" /> Generate
+                                            <Button variant="outline" size="sm" className="mt-3" asChild>
+                                                <Link href={routeMap[report.type]?.href || '/dashboard/reports'}>
+                                                    <Download className="mr-2 h-3 w-3" /> Open
+                                                </Link>
                                             </Button>
                                         </div>
                                     </CardBody>
@@ -77,8 +91,10 @@ export default function ReportsPage() {
                                         <div className="flex-1">
                                             <h3 className="font-semibold text-foreground">{report.name}</h3>
                                             <p className="text-sm text-muted-foreground mt-1">{report.description}</p>
-                                            <Button variant="outline" size="sm" className="mt-3">
-                                                <Download className="mr-2 h-3 w-3" /> Generate
+                                            <Button variant="outline" size="sm" className="mt-3" asChild>
+                                                <Link href={routeMap[report.type]?.href || '/dashboard/reports'}>
+                                                    <Download className="mr-2 h-3 w-3" /> Open
+                                                </Link>
                                             </Button>
                                         </div>
                                     </CardBody>

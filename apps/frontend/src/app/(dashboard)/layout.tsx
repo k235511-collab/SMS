@@ -177,6 +177,12 @@ const navigation: NavItem[] = [
     href: '/dashboard/reports',
     icon: FileText,
     permission: 'reports:read',
+    children: [
+      { label: 'Student Report Card', href: '/dashboard/reports/student-report-card', icon: Users },
+      { label: 'Class Report', href: '/dashboard/reports/class-report', icon: GraduationCap },
+      { label: 'Attendance Report', href: '/dashboard/reports/attendance-report', icon: ClipboardCheck },
+      { label: 'Financial Report', href: '/dashboard/reports/financial-report', icon: DollarSign },
+    ],
   },
   {
     label: 'Settings',

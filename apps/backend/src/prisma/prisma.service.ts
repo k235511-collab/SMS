@@ -91,6 +91,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   get calendarEvent() { return this.client.calendarEvent }
   get communicationLog() { return this.client.communicationLog }
   get resource() { return this.client.resource }
+  get reportCardTemplate() { return this.client.reportCardTemplate }
   get featureFlag() { return this.client.featureFlag }
   get expenseCategory() { return this.client.expenseCategory }
   get expense() { return this.client.expense }

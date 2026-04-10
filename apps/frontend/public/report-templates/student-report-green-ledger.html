@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Student Report Card - Green Ledger</title>
+  <style>
+    :root {
+      --line: #2f4939;
+      --cell: #c9dfbf;
+      --cell-dark: #b8d3ad;
+      --ink: #1b2f24;
+      --muted: #3f5a4b;
+      --accent: #2f4939;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 10mm;
+      font-family: "Trebuchet MS", "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: #dae8d4;
+    }
+
+    .sheet {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      border: 2px solid var(--line);
+      background: var(--cell);
+      padding: 8mm;
+    }
+
+    .head {
+      display: grid;
+      grid-template-columns: 62px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      background: var(--cell-dark);
+      padding: 8px 10px;
+    }
+
+    .logo {
+      width: 62px;
+      height: 62px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .logo-fallback {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: var(--accent);
+      background: var(--cell);
+    }
+
+    .school-name {
+      margin: 0;
+      font-size: 21px;
+      line-height: 1.1;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .head-meta {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .year-chip {
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 6px 10px;
+      font-weight: 700;
+      border-radius: 99px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .student-grid {
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      background: var(--cell-dark);
+      padding: 8px 10px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 14px;
+      font-size: 12px;
+    }
+
+    .student-grid p {
+      margin: 0;
+      white-space: nowrap;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      table-layout: fixed;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 6px;
+      font-size: 12px;
+      text-align: center;
+      background: var(--cell);
+    }
+
+    thead th {
+      background: var(--cell-dark);
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      text-transform: uppercase;
+    }
+
+    .subject-name {
+      text-align: left;
+      font-weight: 600;
+      background: var(--cell-dark);
+    }
+
+    .total-row td {
+      font-weight: 700;
+      background: var(--cell-dark);
+    }
+
+    .empty-row {
+      text-align: center;
+      color: var(--muted);
+      padding: 16px 10px;
+    }
+
+    .summary {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .term-card {
+      border: 1px solid var(--line);
+      background: var(--cell);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .term-card h4 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .term-card p {
+      margin: 2px 0;
+      font-size: 12px;
+    }
+
+    .term-note {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--line);
+      color: var(--muted);
+    }
+
+    .custom {
+      margin-top: 8px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .custom-block {
+      border: 1px solid var(--line);
+      background: var(--cell);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .custom-block h4 {
+      margin: 0 0 4px;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .custom-block p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .footer {
+      margin-top: 8px;
+      text-align: right;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    @media print {
+      body { padding: 0; background: #fff; }
+      .sheet { margin: 0; border-width: 1px; }
+    }
+  </style>
+</head>
+<body>
+  <section class="sheet">
+    <header class="head">
+      <div class="logo">{{SCHOOL_LOGO_BLOCK}}</div>
+      <div>
+        <h1 class="school-name">{{SCHOOL_NAME}}</h1>
+        <p class="head-meta">{{SCHOOL_CONTACT_LINE}}</p>
+      </div>
+      <div class="year-chip">{{ACADEMIC_YEAR}}</div>
+    </header>
+
+    <section class="student-grid">
+      <p><strong>Student:</strong> {{STUDENT_NAME}}</p>
+      <p><strong>Roll #:</strong> {{ROLL_NUMBER}}</p>
+      <p><strong>Class:</strong> {{CLASS_NAME}}</p>
+      <p><strong>Section:</strong> {{SECTION_NAME}}</p>
+      <p><strong>Guardian:</strong> {{GUARDIAN_NAME}}</p>
+      <p><strong>Phone:</strong> {{GUARDIAN_PHONE}}</p>
+      <p><strong>Email:</strong> {{GUARDIAN_EMAIL}}</p>
+      <p><strong>Enrollment:</strong> {{ENROLLMENT_DATE}}</p>
+      <p><strong>Attendance:</strong> {{ATTENDANCE_PRESENT}} / {{ATTENDANCE_TOTAL}}</p>
+      <p><strong>Attendance %:</strong> {{ATTENDANCE_PERCENT}}%</p>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="2" style="width: 16%;">Subjects</th>
+          {{TERM_HEADER_CELLS}}
+        </tr>
+        <tr>
+          {{TERM_SUBHEADER_CELLS}}
+        </tr>
+      </thead>
+      <tbody>
+        {{SUBJECT_ROWS}}
+        <tr class="total-row">
+          <td>Total Marks</td>
+          {{TOTAL_ROW_CELLS}}
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="summary">{{TERM_SUMMARY_CARDS}}</div>
+    <div class="custom">{{CUSTOM_SECTIONS_HTML}}</div>
+    <div class="footer">Generated on {{GENERATED_AT}}</div>
+  </section>
+</body>
+</html>

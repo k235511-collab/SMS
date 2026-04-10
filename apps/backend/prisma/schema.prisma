@@ -87,6 +87,7 @@ model School {
   parentStudents       ParentStudent[]
   periodTemplates      PeriodTemplate[]
   resources            Resource[]
+  reportCardTemplates  ReportCardTemplate[]
   roles                Role[]
   subscriptionPlan     SubscriptionPlan?     @relation(fields: [subscriptionPlanId], references: [id])
   sections             Section[]
@@ -1057,6 +1058,22 @@ model Resource {
   @@index([subjectId])
   @@index([campusId])
   @@map("resources")
+}
+
+model ReportCardTemplate {
+  id           String   @id @default(uuid())
+  schoolId     String
+  templateKey  String
+  templateName String
+  description  String?
+  htmlContent  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, templateKey])
+  @@index([schoolId])
+  @@map("report_card_templates")
 }
 
 model FeatureFlag {

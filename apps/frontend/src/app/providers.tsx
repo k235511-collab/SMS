@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { AuthProvider, useAuth } from '@/context/auth-context'
 import { ThemeProvider } from '@/context/theme-context'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
@@ -10,31 +10,34 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import env from '@/lib/env'
 
 /**
- * Shows the branded splash screen while the initial session is being restored.
+ * Shows a lightweight splash spinner while the initial session is being restored.
  * This prevents "half-loaded" UI flickers (Image 1).
  */
 function RootLoader({ children }: { children: ReactNode }) {
-  const { isLoading, user } = useAuth()
-  const [mounted, setMounted] = useState(false)
+  const { isLoading } = useAuth()
+  const [showSplash, setShowSplash] = useState(false)
 
   useEffect(() => {
-    setMounted(true)
-  }, [])
+    if (!isLoading) {
+      setShowSplash(false)
+      return
+    }
 
-  // If we are restored or truly not logged in, show children
-  // Otherwise show the branded splash
+    // Avoid spinner flash on quick warm-session restores.
+    const timer = window.setTimeout(() => {
+      setShowSplash(true)
+    }, 180)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [isLoading])
+
   if (isLoading) {
-    // Attempt to get branding from localStorage for a premium experience
-    // Note: We only access localStorage after mount to avoid hydration mismatch
-    const cachedLogo = mounted ? localStorage.getItem('sms_last_school_logo') : null
-    const cachedName = mounted ? localStorage.getItem('sms_last_school_name') : null
-
-    return (
-      <BrandSplash
-        logo={user?.schoolLogo || cachedLogo || undefined}
-        schoolName={user?.schoolName || cachedName || undefined}
-      />
-    )
+    // Keep the screen neutral during the grace window to avoid showing route-level
+    // loading states before the global splash appears.
+    if (!showSplash) return null
+    return <BrandSplash />
   }
 
   return <>{children}</>

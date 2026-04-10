@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Student Report Card - Foldable</title>
+  <style>
+    :root {
+      --ink: #153428;
+      --line: #365c49;
+      --soft: #eef6ec;
+      --panel: #ffffff;
+      --muted: #4a6656;
+      --accent: #8cbe6b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 8mm;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      color: var(--ink);
+      background: #dce9d9;
+    }
+
+    .sheet {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto 8mm;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 8mm;
+      page-break-after: always;
+    }
+
+    .sheet:last-child { page-break-after: auto; }
+
+    .sheet-title {
+      margin: 0 0 6mm;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+
+    .fold-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8mm;
+      min-height: 220mm;
+    }
+
+    .panel {
+      border: 2px solid var(--line);
+      border-radius: 10px;
+      padding: 6mm;
+      background: var(--soft);
+    }
+
+    .school-row {
+      display: grid;
+      grid-template-columns: 52px 1fr;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .school-logo {
+      width: 52px;
+      height: 52px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--panel);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .school-logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .logo-fallback {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: var(--accent);
+      background: #f7fcf5;
+    }
+
+    .school-name {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.15;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .school-meta {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .section-title {
+      margin: 0 0 8px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 4px;
+    }
+
+    .detail-line {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 8px;
+      font-size: 13px;
+      margin: 6px 0;
+    }
+
+    .detail-line span:first-child {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 8px;
+    }
+
+    .metric-label {
+      margin: 0;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      margin: 2px 0 0;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .fold-note {
+      margin-top: 8mm;
+      border-top: 2px dashed var(--line);
+      text-align: center;
+      color: var(--muted);
+      padding-top: 8px;
+      font-size: 12px;
+      letter-spacing: 0.25px;
+    }
+
+    .marks-shell {
+      border: 2px solid var(--line);
+      border-radius: 10px;
+      padding: 6mm;
+      background: #f5faf2;
+    }
+
+    .marks-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .marks-head h2 {
+      margin: 0;
+      font-size: 18px;
+      text-transform: uppercase;
+    }
+
+    .marks-head p {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      margin-top: 8px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 7px 6px;
+      font-size: 12px;
+      text-align: center;
+      vertical-align: middle;
+    }
+
+    th {
+      background: var(--soft);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+    }
+
+    .subject-name {
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .total-row td {
+      background: var(--soft);
+      font-weight: 700;
+    }
+
+    .term-summary {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .term-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 8px;
+    }
+
+    .term-card h4 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .term-card p {
+      margin: 3px 0;
+      font-size: 12px;
+      color: var(--ink);
+    }
+
+    .term-note {
+      border-top: 1px dashed var(--line);
+      margin-top: 6px;
+      padding-top: 6px;
+      color: var(--muted);
+    }
+
+    .custom-sections {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .custom-block {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 8px;
+    }
+
+    .custom-block h4 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .custom-block p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .empty-row {
+      text-align: center;
+      color: var(--muted);
+      padding: 14px 8px;
+    }
+
+    .footer-meta {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+        padding: 0;
+      }
+
+      .sheet {
+        margin: 0;
+        border: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <section class="sheet">
+    <h1 class="sheet-title">Student Report Card - Outside</h1>
+
+    <div class="fold-grid">
+      <article class="panel">
+        <div class="school-row">
+          <div class="school-logo">{{SCHOOL_LOGO_BLOCK}}</div>
+          <div>
+            <h2 class="school-name">{{SCHOOL_NAME}}</h2>
+            <p class="school-meta">{{SCHOOL_CONTACT_LINE}}</p>
+          </div>
+        </div>
+
+        <h3 class="section-title">Student Details</h3>
+        <div class="detail-line"><span>Student Name</span><span>{{STUDENT_NAME}}</span></div>
+        <div class="detail-line"><span>Roll Number</span><span>{{ROLL_NUMBER}}</span></div>
+        <div class="detail-line"><span>Class</span><span>{{CLASS_NAME}}</span></div>
+        <div class="detail-line"><span>Section</span><span>{{SECTION_NAME}}</span></div>
+        <div class="detail-line"><span>Academic Year</span><span>{{ACADEMIC_YEAR}}</span></div>
+        <div class="detail-line"><span>Enrollment Date</span><span>{{ENROLLMENT_DATE}}</span></div>
+      </article>
+
+      <article class="panel">
+        <h3 class="section-title">Guardian and Attendance</h3>
+        <div class="detail-line"><span>Guardian Name</span><span>{{GUARDIAN_NAME}}</span></div>
+        <div class="detail-line"><span>Guardian Phone</span><span>{{GUARDIAN_PHONE}}</span></div>
+        <div class="detail-line"><span>Guardian Email</span><span>{{GUARDIAN_EMAIL}}</span></div>
+
+        <div class="metric-grid">
+          <div class="metric">
+            <p class="metric-label">Attendance Days</p>
+            <p class="metric-value">{{ATTENDANCE_TOTAL}}</p>
+          </div>
+          <div class="metric">
+            <p class="metric-label">Present Days</p>
+            <p class="metric-value">{{ATTENDANCE_PRESENT}}</p>
+          </div>
+          <div class="metric" style="grid-column: span 2;">
+            <p class="metric-label">Attendance Percentage</p>
+            <p class="metric-value">{{ATTENDANCE_PERCENT}}%</p>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <div class="fold-note">Fold on center line: outside details panel first, marks table on the inside.</div>
+  </section>
+
+  <section class="sheet">
+    <div class="marks-shell">
+      <div class="marks-head">
+        <div>
+          <h2>Marks Ledger</h2>
+          <p>{{STUDENT_NAME}} | Roll #{{ROLL_NUMBER}} | {{CLASS_NAME}} - {{SECTION_NAME}}</p>
+        </div>
+        <div>
+          <p><strong>School:</strong> {{SCHOOL_NAME}}</p>
+          <p><strong>Academic Year:</strong> {{ACADEMIC_YEAR}}</p>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th rowspan="2">Subjects</th>
+            {{TERM_HEADER_CELLS}}
+          </tr>
+          <tr>
+            {{TERM_SUBHEADER_CELLS}}
+          </tr>
+        </thead>
+        <tbody>
+          {{SUBJECT_ROWS}}
+          <tr class="total-row">
+            <td>Total Marks</td>
+            {{TOTAL_ROW_CELLS}}
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="term-summary">{{TERM_SUMMARY_CARDS}}</div>
+      <div class="custom-sections">{{CUSTOM_SECTIONS_HTML}}</div>
+      <div class="footer-meta">Generated on {{GENERATED_AT}}</div>
+    </div>
+  </section>
+</body>
+</html>
