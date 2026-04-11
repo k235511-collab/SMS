@@ -34,6 +34,7 @@ interface DashboardOverview {
     academicYears: number
     campuses: number
     classes: number
+    sections: number
     subjects: number
     teachers: number
     students: number
@@ -148,6 +149,7 @@ export default function DashboardPage() {
     academicYears: 0,
     campuses: 0,
     classes: 0,
+    sections: 0,
     subjects: 0,
     teachers: 0,
     students: 0,
@@ -194,6 +196,18 @@ export default function DashboardPage() {
       description: 'Add students to your school',
       href: '/dashboard/students',
       done: setupCounts.students > 0,
+      permission: 'students:create',
+    },
+    {
+      key: 'bulk-import-essentials',
+      label: 'Prepare Bulk Import Essentials',
+      description: 'Ensure campus, academic year, classes and sections are ready for bulk import',
+      href: '/dashboard/students',
+      done:
+        setupCounts.campuses > 0 &&
+        setupCounts.academicYears > 0 &&
+        setupCounts.classes > 0 &&
+        setupCounts.sections > 0,
       permission: 'students:create',
     },
   ]

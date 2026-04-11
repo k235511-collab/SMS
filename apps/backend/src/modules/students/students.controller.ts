@@ -10,8 +10,14 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  Res,
 } from '@nestjs/common'
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger'
+import { FileInterceptor } from '@nestjs/platform-express'
+import { Response } from 'express'
 import { StudentsService } from './students.service'
 import { CreateStudentDto, UpdateStudentDto, GetStudentsDto, StudentStatsDto, PromoteStudentsDto, MarkAsLeftDto } from './dto'
 import { RequirePermission, TenantId, CampusId, TeacherId, CurrentUser } from '../../common/decorators'
@@ -47,6 +53,79 @@ export class StudentsController {
   @ApiResponse({ status: 200, description: 'Promotion result summary' })
   promote(@TenantId() schoolId: string, @Body() dto: PromoteStudentsDto) {
     return this.studentsService.promote(schoolId, dto)
+  }
+
+  @Get('import/template')
+  @RequirePermission(Permission.CREATE_STUDENT)
+  @ApiOperation({ summary: 'Download students bulk import template' })
+  @ApiResponse({ status: 200, description: 'Excel template file' })
+  async downloadImportTemplate(
+    @TenantId() schoolId: string,
+    @CampusId() campusId: string | undefined,
+    @Res() res: Response,
+  ) {
+    const workbook = await this.studentsService.generateImportTemplateWorkbook(schoolId, campusId)
+    const fileName = `students-import-template-${new Date().toISOString().slice(0, 10)}.xlsx`
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`)
+    return res.send(workbook)
+  }
+
+  @Post('import/preview')
+  @UseInterceptors(FileInterceptor('file'))
+  @RequirePermission(Permission.CREATE_STUDENT)
+  @ApiOperation({ summary: 'Preview students import from uploaded Excel file' })
+  @ApiResponse({ status: 200, description: 'Validation result with valid rows and errors' })
+  previewImport(
+    @TenantId() schoolId: string,
+    @CampusId() campusId: string | undefined,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Excel file is required')
+    }
+    return this.studentsService.previewImportStudentsWorkbook(schoolId, campusId, file.buffer)
+  }
+
+  @Post('import/commit')
+  @UseInterceptors(FileInterceptor('file'))
+  @RequirePermission(Permission.CREATE_STUDENT)
+  @ApiOperation({ summary: 'Import students from uploaded Excel file' })
+  @ApiResponse({ status: 200, description: 'Import execution summary' })
+  commitImport(
+    @TenantId() schoolId: string,
+    @CampusId() campusId: string | undefined,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Excel file is required')
+    }
+    return this.studentsService.commitImportStudentsWorkbook(schoolId, campusId, file.buffer)
+  }
+
+  @Get('export')
+  @RequirePermission(Permission.READ_STUDENT)
+  @ApiOperation({ summary: 'Export students to Excel (respects active filters)' })
+  @ApiResponse({ status: 200, description: 'Excel export file' })
+  async exportStudents(
+    @TenantId() schoolId: string,
+    @CampusId() campusId: string | undefined,
+    @Query() query: GetStudentsDto,
+    @Res() res: Response,
+    @TeacherId() teacherId?: string | null,
+    @CurrentUser() user?: { userId?: string; id?: string; sub?: string } | null,
+  ) {
+    const workbook = await this.studentsService.generateExportWorkbook(
+      schoolId,
+      query,
+      campusId,
+      teacherId,
+      user?.userId ?? user?.id ?? user?.sub ?? null,
+    )
+    const fileName = `students-export-${new Date().toISOString().slice(0, 10)}.xlsx`
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`)
+    return res.send(workbook)
   }
 
   @Get('stats')

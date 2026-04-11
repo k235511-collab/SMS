@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { reportsService } from '@/services/analytics.service'
 import { academicsService } from '@/services/academics.service'
 import { useSession } from '@/context/session-context'
+import { escapePrintHtml, multilineToPrintHtml, printFormalReport } from '@/lib/report-print'
 import { CalendarRange, ClipboardCheck, FileText, Loader2, Plus, Printer, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -310,6 +311,128 @@ export default function AttendanceReportPage() {
     }
   }
 
+  const handlePrintReport = () => {
+    if (!reportData) {
+      toast.error('Generate the report first to print')
+      return
+    }
+
+    const statusTableHtml = statusBars.length
+      ? `<table class="report-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${statusBars
+              .map((row) => `<tr>
+                <td>${escapePrintHtml(row.label)}</td>
+                <td>${escapePrintHtml(row.count)}</td>
+              </tr>`)
+              .join('')}
+          </tbody>
+        </table>`
+      : '<div class="empty">No attendance records available for selected range.</div>'
+
+    const studentTableHtml = attendanceRows.length
+      ? `<table class="report-table">
+          <thead>
+            <tr>
+              <th>Roll #</th>
+              <th>Student</th>
+              <th>Present</th>
+              <th>Absent</th>
+              <th>Late</th>
+              <th>Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${attendanceRows
+              .map((row) => `<tr>
+                <td>${escapePrintHtml(row.student.rollNumber)}</td>
+                <td>${escapePrintHtml(`${row.student.firstName} ${row.student.lastName}`)}</td>
+                <td>${escapePrintHtml(row.summary.present)}</td>
+                <td>${escapePrintHtml(row.summary.absent)}</td>
+                <td>${escapePrintHtml(row.summary.late)}</td>
+                <td>${escapePrintHtml(row.attendanceRate)}%</td>
+              </tr>`)
+              .join('')}
+          </tbody>
+        </table>`
+      : '<div class="empty">No student attendance rows found.</div>'
+
+    const notesHtml = customSections
+      .map((section) => `<article class="note-block">
+          <h4 class="note-title">${escapePrintHtml(section.title || 'Custom Section')}</h4>
+          <p class="note-content">${multilineToPrintHtml(section.content || 'No content provided.')}</p>
+        </article>`)
+      .join('')
+
+    const printed = printFormalReport({
+      title: 'Attendance Report',
+      subtitle: `${selectedYear?.name || 'Academic Year'} | Template: ${activeTemplate.name}`,
+      contentHtml: `
+        <section class="section">
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <p class="kpi-label">Class</p>
+              <p class="kpi-value">${escapePrintHtml(reportData.section.class?.name || '-')}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Section</p>
+              <p class="kpi-value">${escapePrintHtml(reportData.section.name)}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Students</p>
+              <p class="kpi-value">${escapePrintHtml(reportData.overview.totalStudents)}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Attendance Rate</p>
+              <p class="kpi-value">${escapePrintHtml(reportData.overview.attendanceRate)}%</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Date Range</h2>
+          <table class="report-table">
+            <tbody>
+              <tr>
+                <th>From</th>
+                <td>${escapePrintHtml(new Date(reportData.range.startDate).toLocaleDateString())}</td>
+                <th>To</th>
+                <td>${escapePrintHtml(new Date(reportData.range.endDate).toLocaleDateString())}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Status Distribution</h2>
+          ${statusTableHtml}
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Student Attendance Table</h2>
+          ${studentTableHtml}
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Custom Notes</h2>
+          ${notesHtml || '<div class="empty">No custom notes added.</div>'}
+        </section>
+
+        <div class="footer-meta">Generated on ${escapePrintHtml(new Date(reportData.generatedAt).toLocaleString())}</div>
+      `,
+    })
+
+    if (!printed) {
+      toast.error('Please allow popups to print report')
+    }
+  }
+
   return (
     <ProtectedRoute permission="reports:read">
       <div className="space-y-6">
@@ -322,7 +445,7 @@ export default function AttendanceReportPage() {
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline">{selectedYear?.name || 'Academic Year'}</Badge>
-            <Button variant="outline" onClick={() => window.print()} disabled={!reportData}>
+            <Button variant="outline" onClick={handlePrintReport} disabled={!reportData}>
               <Printer className="mr-2 h-4 w-4" /> Print / Save PDF
             </Button>
           </div>

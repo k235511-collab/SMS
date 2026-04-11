@@ -9,9 +9,88 @@ import {
 import { PrismaService } from '../../prisma/prisma.service'
 import { PaginatedResult } from '../../common/dto'
 import { CreateStudentDto, UpdateStudentDto, GetStudentsDto, StudentStatsDto, PromoteStudentsDto } from './dto'
-import { StudentStatus } from '@prisma/client'
+import { Gender, StudentStatus } from '@prisma/client'
 import { FinanceCronService } from '../finance/finance-cron.service'
 import { TeacherScopeService } from '../teachers/teacher-scope.service'
+import * as XLSX from 'xlsx'
+import * as ExcelJS from 'exceljs'
+
+type StudentImportError = {
+  rowNumber: number
+  field: string
+  message: string
+}
+
+type StudentImportRow = {
+  rowNumber: number
+  dto: CreateStudentDto
+  className: string
+  sectionName: string
+}
+
+type StudentImportPreview = {
+  summary: {
+    totalRows: number
+    validRows: number
+    invalidRows: number
+  }
+  validRows: Array<{
+    rowNumber: number
+    rollNumber: string
+    firstName: string
+    lastName: string
+    className: string
+    sectionName: string
+    status: string
+  }>
+  errors: StudentImportError[]
+}
+
+const STUDENT_TEMPLATE_COLUMNS = [
+  'Roll Number',
+  'First Name',
+  'Last Name',
+  'Class Section',
+  'Gender',
+  'Date Of Birth',
+  'Blood Group',
+  'Guardian Name',
+  'Guardian Phone',
+  'Guardian Email',
+  'Address',
+  'Status',
+  'CNIC',
+  'Phone',
+  'Group',
+  'Religion',
+  'Admission Note',
+] as const
+
+const STUDENT_IMPORT_REQUIRED_COLUMNS: Array<(typeof STUDENT_TEMPLATE_COLUMNS)[number]> = [
+  'Roll Number',
+  'First Name',
+  'Last Name',
+  'Class Section',
+]
+
+const STUDENT_IMPORT_TEMPLATE_VERSION = '2.0'
+const STUDENT_IMPORT_METADATA_KEYS = {
+  templateVersion: 'Template Version',
+  schoolId: 'School ID',
+  campusId: 'Campus ID',
+  campusName: 'Campus Name',
+  generatedAt: 'Generated At',
+}
+
+const IMPORT_ALLOWED_GENDERS = new Set(Object.values(Gender))
+const IMPORT_ALLOWED_STATUS = new Set<StudentStatus>([
+  StudentStatus.ACTIVE,
+  StudentStatus.INACTIVE,
+  StudentStatus.GRADUATED,
+  StudentStatus.TRANSFERRED,
+  StudentStatus.SUSPENDED,
+  StudentStatus.LEFT,
+])
 
 @Injectable()
 export class StudentsService {
@@ -53,6 +132,697 @@ export class StudentsService {
       return null
     }
     return scope.classIds
+  }
+
+  private normalizeLookup(value: unknown): string {
+    return String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+  }
+
+  private toStringValue(value: unknown): string {
+    return String(value ?? '').trim()
+  }
+
+  private parseImportDate(value: unknown): { value?: string; error?: string } {
+    if (value == null || value === '') {
+      return { value: undefined }
+    }
+
+    if (typeof value === 'number') {
+      const parsed = XLSX.SSF.parse_date_code(value)
+      if (!parsed) {
+        return { error: 'Invalid excel date value' }
+      }
+
+      const date = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d))
+      return { value: date.toISOString().slice(0, 10) }
+    }
+
+    const raw = String(value).trim()
+    if (!raw) {
+      return { value: undefined }
+    }
+
+    const date = new Date(raw)
+    if (Number.isNaN(date.getTime())) {
+      return { error: 'Invalid date format. Use YYYY-MM-DD' }
+    }
+
+    return { value: date.toISOString().slice(0, 10) }
+  }
+
+  private buildClassSectionLabel(className: string, sectionName: string, classCode?: string | null): string {
+    const classCodeText = classCode ? ` (${classCode})` : ''
+    return `${className}${classCodeText} | ${sectionName}`
+  }
+
+  private readImportMetadata(workbook: XLSX.WorkBook) {
+    const metadataSheet = workbook.Sheets['Metadata']
+    if (!metadataSheet) {
+      throw new BadRequestException('Metadata sheet is missing. Please download and use the latest import template.')
+    }
+
+    const metadataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(metadataSheet, {
+      defval: '',
+      raw: false,
+    })
+
+    const metadata = new Map<string, string>()
+    for (const row of metadataRows) {
+      const key = this.toStringValue(row.Key)
+      if (!key) continue
+      metadata.set(key, this.toStringValue(row.Value))
+    }
+
+    const templateVersion = metadata.get(STUDENT_IMPORT_METADATA_KEYS.templateVersion)
+    const metadataSchoolId = metadata.get(STUDENT_IMPORT_METADATA_KEYS.schoolId)
+    const metadataCampusId = metadata.get(STUDENT_IMPORT_METADATA_KEYS.campusId)
+    const metadataCampusName = metadata.get(STUDENT_IMPORT_METADATA_KEYS.campusName)
+
+    if (!templateVersion || !metadataSchoolId || !metadataCampusId) {
+      throw new BadRequestException('Template metadata is incomplete. Please download a fresh template and try again.')
+    }
+
+    return {
+      templateVersion,
+      schoolId: metadataSchoolId,
+      campusId: metadataCampusId,
+      campusName: metadataCampusName || 'Unknown campus',
+    }
+  }
+
+  private async parseStudentImportWorkbook(
+    schoolId: string,
+    campusId: string,
+    fileBuffer: Buffer,
+  ): Promise<{ rows: StudentImportRow[]; preview: StudentImportPreview }> {
+    let workbook: XLSX.WorkBook
+    try {
+      workbook = XLSX.read(fileBuffer, { type: 'buffer' })
+    } catch {
+      throw new BadRequestException('Invalid Excel file. Please upload a valid .xlsx file.')
+    }
+
+    const metadata = this.readImportMetadata(workbook)
+    if (metadata.templateVersion !== STUDENT_IMPORT_TEMPLATE_VERSION) {
+      throw new BadRequestException(
+        `Unsupported template version "${metadata.templateVersion}". Please download the latest template (v${STUDENT_IMPORT_TEMPLATE_VERSION}).`,
+      )
+    }
+    if (metadata.schoolId !== schoolId) {
+      throw new BadRequestException('This template belongs to a different school. Please download a fresh template from your account.')
+    }
+    if (metadata.campusId !== campusId) {
+      throw new BadRequestException(
+        `Template campus mismatch. Template is for "${metadata.campusName}" but current campus is different.`,
+      )
+    }
+
+    const sheet = workbook.Sheets['Students']
+    if (!sheet) {
+      throw new BadRequestException('Students sheet not found. Please use the provided template.')
+    }
+
+    const sheetRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+    })
+    const headerRow = Array.isArray(sheetRows[0]) ? sheetRows[0] : []
+    const normalizedHeaders = new Set(headerRow.map((cell) => this.normalizeLookup(cell)))
+    const missingHeaders = STUDENT_TEMPLATE_COLUMNS.filter(
+      (column) => !normalizedHeaders.has(this.normalizeLookup(column)),
+    )
+
+    if (missingHeaders.length > 0) {
+      throw new BadRequestException(
+        `Invalid template columns. Missing: ${missingHeaders.join(', ')}. Please download and use the latest template.`,
+      )
+    }
+
+    const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      defval: '',
+      raw: false,
+    })
+
+    const classes = await this.prisma.class.findMany({
+      where: {
+        schoolId,
+        deletedAt: null,
+        campusId,
+      },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        sections: {
+          where: { deletedAt: null },
+          select: { id: true, name: true },
+        },
+      },
+    })
+
+    if (classes.length === 0) {
+      throw new BadRequestException('No classes found for the selected campus. Create classes before importing students.')
+    }
+
+    const classSectionMap = new Map<
+      string,
+      {
+        classId: string
+        className: string
+        sectionId: string
+        sectionName: string
+      }
+    >()
+
+    classes.forEach((item) => {
+      item.sections.forEach((section) => {
+        const labelWithCode = this.buildClassSectionLabel(item.name, section.name, item.code)
+        classSectionMap.set(this.normalizeLookup(labelWithCode), {
+          classId: item.id,
+          className: item.name,
+          sectionId: section.id,
+          sectionName: section.name,
+        })
+
+        const labelWithoutCode = this.buildClassSectionLabel(item.name, section.name)
+        classSectionMap.set(this.normalizeLookup(labelWithoutCode), {
+          classId: item.id,
+          className: item.name,
+          sectionId: section.id,
+          sectionName: section.name,
+        })
+      })
+    })
+
+    const errors: StudentImportError[] = []
+    const rows: StudentImportRow[] = []
+    const seenRollNumbers = new Map<string, number>()
+
+    const rowPayloads = rawRows.map((raw, index) => ({
+      rowNumber: index + 2,
+      values: Object.fromEntries(
+        STUDENT_TEMPLATE_COLUMNS.map((column) => [column, this.toStringValue(raw[column])]),
+      ) as Record<(typeof STUDENT_TEMPLATE_COLUMNS)[number], string>,
+    }))
+
+    const nonEmptyPayloads = rowPayloads.filter((item) =>
+      Object.values(item.values).some((value) => value !== ''),
+    )
+
+    const rollNumbersToCheck = Array.from(
+      new Set(
+        nonEmptyPayloads
+          .map((item) => item.values['Roll Number'])
+          .filter((value) => value.length > 0),
+      ),
+    )
+
+    const existingRolls = await this.prisma.student.findMany({
+      where: {
+        schoolId,
+        campusId,
+        deletedAt: null,
+        rollNumber: { in: rollNumbersToCheck },
+      },
+      select: { rollNumber: true },
+    })
+
+    const existingRollSet = new Set(existingRolls.map((row) => row.rollNumber.toLowerCase()))
+
+    for (const payload of nonEmptyPayloads) {
+      const { rowNumber, values } = payload
+
+      const rollNumber = values['Roll Number']
+      const firstName = values['First Name']
+      const lastName = values['Last Name']
+      const classSection = values['Class Section']
+      const statusRaw = values['Status']
+      const genderRaw = values['Gender']
+
+      for (const requiredColumn of STUDENT_IMPORT_REQUIRED_COLUMNS) {
+        if (!values[requiredColumn]) {
+          errors.push({ rowNumber, field: requiredColumn, message: `${requiredColumn} is required` })
+        }
+      }
+
+      const rollKey = rollNumber.toLowerCase()
+      if (rollNumber) {
+        if (seenRollNumbers.has(rollKey)) {
+          const firstSeenAt = seenRollNumbers.get(rollKey)
+          errors.push({
+            rowNumber,
+            field: 'Roll Number',
+            message: `Duplicate roll number in file (already used at row ${firstSeenAt})`,
+          })
+        } else {
+          seenRollNumbers.set(rollKey, rowNumber)
+        }
+
+        if (existingRollSet.has(rollKey)) {
+          errors.push({
+            rowNumber,
+            field: 'Roll Number',
+            message: 'Roll Number already exists in selected campus',
+          })
+        }
+      }
+
+      const normalizedGender = genderRaw ? genderRaw.toUpperCase() : ''
+      if (normalizedGender && !IMPORT_ALLOWED_GENDERS.has(normalizedGender as Gender)) {
+        errors.push({
+          rowNumber,
+          field: 'Gender',
+          message: `Invalid gender "${genderRaw}". Allowed: ${Array.from(IMPORT_ALLOWED_GENDERS).join(', ')}`,
+        })
+      }
+
+      const normalizedStatus = statusRaw ? statusRaw.toUpperCase() : StudentStatus.ACTIVE
+      if (normalizedStatus && !IMPORT_ALLOWED_STATUS.has(normalizedStatus as StudentStatus)) {
+        errors.push({
+          rowNumber,
+          field: 'Status',
+          message: `Invalid status "${statusRaw}". Allowed: ${Array.from(IMPORT_ALLOWED_STATUS).join(', ')}`,
+        })
+      }
+
+      const parsedDob = this.parseImportDate(values['Date Of Birth'])
+      if (parsedDob.error) {
+        errors.push({ rowNumber, field: 'Date Of Birth', message: parsedDob.error })
+      }
+
+      const classSectionRecord = classSectionMap.get(this.normalizeLookup(classSection))
+      if (classSection && !classSectionRecord) {
+        errors.push({
+          rowNumber,
+          field: 'Class Section',
+          message: `Invalid Class Section "${classSection}". Please select value from template dropdown list.`,
+        })
+      }
+
+      const rowHasErrors = errors.some((error) => error.rowNumber === rowNumber)
+      if (rowHasErrors || !classSectionRecord) {
+        continue
+      }
+
+      rows.push({
+        rowNumber,
+        className: classSectionRecord.className,
+        sectionName: classSectionRecord.sectionName,
+        dto: {
+          rollNumber,
+          firstName,
+          lastName,
+          gender: normalizedGender ? (normalizedGender as Gender) : undefined,
+          dateOfBirth: parsedDob.value,
+          bloodGroup: values['Blood Group'] || undefined,
+          guardianName: values['Guardian Name'] || undefined,
+          guardianPhone: values['Guardian Phone'] || undefined,
+          guardianEmail: values['Guardian Email'] || undefined,
+          address: values['Address'] || undefined,
+          classId: classSectionRecord.classId,
+          sectionId: classSectionRecord.sectionId,
+          status: (normalizedStatus as StudentStatus) || StudentStatus.ACTIVE,
+          cnic: values['CNIC'] || undefined,
+          phone: values['Phone'] || undefined,
+          group: values['Group'] || undefined,
+          religion: values['Religion'] || undefined,
+          admissionNote: values['Admission Note'] || undefined,
+        },
+      })
+    }
+
+    const preview: StudentImportPreview = {
+      summary: {
+        totalRows: nonEmptyPayloads.length,
+        validRows: rows.length,
+        invalidRows: errors.length > 0 ? new Set(errors.map((error) => error.rowNumber)).size : 0,
+      },
+      validRows: rows.slice(0, 50).map((row) => ({
+        rowNumber: row.rowNumber,
+        rollNumber: row.dto.rollNumber,
+        firstName: row.dto.firstName,
+        lastName: row.dto.lastName,
+        className: row.className,
+        sectionName: row.sectionName,
+        status: row.dto.status || StudentStatus.ACTIVE,
+      })),
+      errors,
+    }
+
+    return { rows, preview }
+  }
+
+  async generateImportTemplateWorkbook(schoolId: string, campusId?: string): Promise<Buffer> {
+    if (!campusId) {
+      throw new BadRequestException('Select a campus before downloading import template')
+    }
+
+    const campus = await this.prisma.campus.findFirst({
+      where: { id: campusId, schoolId },
+      select: { id: true, name: true },
+    })
+
+    if (!campus) {
+      throw new BadRequestException('Selected campus was not found for this school')
+    }
+
+    const classes = await this.prisma.class.findMany({
+      where: { schoolId, campusId, deletedAt: null },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        sections: {
+          where: { deletedAt: null },
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true },
+        },
+      },
+    })
+
+    const classSectionOptions = classes.flatMap((item) =>
+      item.sections.map((section) => ({
+        label: this.buildClassSectionLabel(item.name, section.name, item.code),
+        classId: item.id,
+        className: item.name,
+        classCode: item.code || '',
+        sectionId: section.id,
+        sectionName: section.name,
+      })),
+    )
+
+    if (classSectionOptions.length === 0) {
+      throw new BadRequestException('No sections found in selected campus. Create sections before downloading template.')
+    }
+
+    const workbook = new ExcelJS.Workbook()
+    workbook.creator = 'SMS SaaS'
+    workbook.created = new Date()
+
+    const studentsSheet = workbook.addWorksheet('Students')
+    const classesSheet = workbook.addWorksheet('Classes')
+    const sectionsSheet = workbook.addWorksheet('Sections')
+    const classSectionLookupSheet = workbook.addWorksheet('Lookup_ClassSections')
+    const enumLookupSheet = workbook.addWorksheet('Lookup_Enums')
+    const metadataSheet = workbook.addWorksheet('Metadata')
+    const instructionsSheet = workbook.addWorksheet('Instructions')
+
+    const templateHeaders = [...STUDENT_TEMPLATE_COLUMNS]
+    studentsSheet.addRow(templateHeaders)
+    studentsSheet.addRow([
+      'STU-001',
+      'Ali',
+      'Khan',
+      classSectionOptions[0]?.label || '',
+      'MALE',
+      '2012-01-31',
+      'O+',
+      'Ahmed Khan',
+      '+923001234567',
+      'guardian@example.com',
+      'Street 1, City',
+      'ACTIVE',
+      '35202-1234567-1',
+      '+923001234567',
+      'Science',
+      'Islam',
+      'Optional note',
+    ])
+
+    studentsSheet.views = [{ state: 'frozen', ySplit: 1 }]
+    studentsSheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: templateHeaders.length },
+    }
+    templateHeaders.forEach((header, index) => {
+      const column = studentsSheet.getColumn(index + 1)
+      column.width = header.length > 14 ? header.length + 2 : 18
+      const headerCell = studentsSheet.getCell(1, index + 1)
+      headerCell.font = { bold: true }
+      headerCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE8EEF8' },
+      }
+    })
+
+    classesSheet.addRow(['Class Name', 'Class Code', 'Class ID'])
+    classes.forEach((item) => {
+      classesSheet.addRow([item.name, item.code || '', item.id])
+    })
+    classesSheet.getRow(1).font = { bold: true }
+
+    sectionsSheet.addRow(['Class Name', 'Class Code', 'Section Name', 'Section ID'])
+    classSectionOptions.forEach((row) => {
+      sectionsSheet.addRow([row.className, row.classCode, row.sectionName, row.sectionId])
+    })
+    sectionsSheet.getRow(1).font = { bold: true }
+
+    classSectionLookupSheet.addRow(['Class Section', 'Class ID', 'Section ID', 'Class Name', 'Section Name'])
+    classSectionOptions.forEach((row) => {
+      classSectionLookupSheet.addRow([row.label, row.classId, row.sectionId, row.className, row.sectionName])
+    })
+
+    enumLookupSheet.addRow(['Gender', 'Status'])
+    const genders = Array.from(IMPORT_ALLOWED_GENDERS)
+    const statuses = Array.from(IMPORT_ALLOWED_STATUS)
+    const enumRows = Math.max(genders.length, statuses.length)
+    for (let i = 0; i < enumRows; i += 1) {
+      enumLookupSheet.addRow([genders[i] || '', statuses[i] || ''])
+    }
+
+    metadataSheet.addRow(['Key', 'Value'])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.templateVersion, STUDENT_IMPORT_TEMPLATE_VERSION])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.schoolId, schoolId])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusId, campus.id])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusName, campus.name])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.generatedAt, new Date().toISOString()])
+
+    instructionsSheet.addRow(['Step', 'Details'])
+    instructionsSheet.addRow(['1', 'Do not rename headers in Students sheet.'])
+    instructionsSheet.addRow(['2', 'Use dropdown for Class Section, Gender and Status.'])
+    instructionsSheet.addRow(['3', 'Class Section is required and campus-bound to this template.'])
+    instructionsSheet.addRow(['4', 'Fill required columns: Roll Number, First Name, Last Name, Class Section.'])
+    instructionsSheet.addRow(['5', 'Preview import first, then commit import.'])
+    instructionsSheet.getRow(1).font = { bold: true }
+
+    const classSectionColumnIndex = templateHeaders.indexOf('Class Section') + 1
+    const genderColumnIndex = templateHeaders.indexOf('Gender') + 1
+    const statusColumnIndex = templateHeaders.indexOf('Status') + 1
+    const maxRows = 1000
+
+    const classSectionValidation = `'Lookup_ClassSections'!$A$2:$A$${classSectionOptions.length + 1}`
+    const genderValidation = `'Lookup_Enums'!$A$2:$A$${genders.length + 1}`
+    const statusValidation = `'Lookup_Enums'!$B$2:$B$${statuses.length + 1}`
+
+    for (let rowNumber = 2; rowNumber <= maxRows + 1; rowNumber += 1) {
+      studentsSheet.getCell(rowNumber, classSectionColumnIndex).dataValidation = {
+        type: 'list',
+        allowBlank: false,
+        formulae: [classSectionValidation],
+        showErrorMessage: true,
+        errorTitle: 'Invalid Class Section',
+        error: 'Select a valid Class Section from dropdown.',
+      }
+
+      studentsSheet.getCell(rowNumber, genderColumnIndex).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: [genderValidation],
+      }
+
+      studentsSheet.getCell(rowNumber, statusColumnIndex).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: [statusValidation],
+      }
+    }
+
+    classSectionLookupSheet.state = 'veryHidden'
+    enumLookupSheet.state = 'veryHidden'
+    metadataSheet.state = 'veryHidden'
+
+    const buffer = await workbook.xlsx.writeBuffer()
+    return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer)
+  }
+
+  async previewImportStudentsWorkbook(schoolId: string, campusId: string | undefined, fileBuffer: Buffer) {
+    if (!campusId) {
+      throw new BadRequestException('Select a campus before importing students')
+    }
+
+    const { preview } = await this.parseStudentImportWorkbook(schoolId, campusId, fileBuffer)
+    return preview
+  }
+
+  async commitImportStudentsWorkbook(schoolId: string, campusId: string | undefined, fileBuffer: Buffer) {
+    if (!campusId) {
+      throw new BadRequestException('Select a campus before importing students')
+    }
+
+    const { rows, preview } = await this.parseStudentImportWorkbook(schoolId, campusId, fileBuffer)
+
+    const runtimeErrors: StudentImportError[] = [...preview.errors]
+    let imported = 0
+
+    for (const row of rows) {
+      try {
+        await this.create(schoolId, row.dto, campusId)
+        imported += 1
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to import row'
+        runtimeErrors.push({
+          rowNumber: row.rowNumber,
+          field: 'Row',
+          message,
+        })
+      }
+    }
+
+    const failedRows = runtimeErrors.length > 0 ? new Set(runtimeErrors.map((error) => error.rowNumber)).size : 0
+
+    return {
+      summary: {
+        totalRows: preview.summary.totalRows,
+        validRows: preview.summary.validRows,
+        invalidRows: failedRows,
+      },
+      imported,
+      failed: failedRows,
+      errors: runtimeErrors,
+    }
+  }
+
+  async generateExportWorkbook(
+    schoolId: string,
+    query: GetStudentsDto & { deleted?: string },
+    campusId?: string,
+    teacherId?: string | null,
+    requesterUserId?: string | null,
+  ): Promise<Buffer> {
+    if (!campusId) {
+      throw new BadRequestException('Select a campus before exporting students')
+    }
+
+    const campus = await this.prisma.campus.findFirst({
+      where: { id: campusId, schoolId },
+      select: { id: true, name: true },
+    })
+
+    if (!campus) {
+      throw new BadRequestException('Selected campus was not found for this school')
+    }
+
+    const andWhere: any[] = [{ schoolId }, { deletedAt: null }, { campusId }]
+
+    const effectiveTeacherId = await this.resolveEffectiveTeacherId(schoolId, teacherId, requesterUserId)
+    if (effectiveTeacherId) {
+      const classIds = await this.getTeacherClassFilter(effectiveTeacherId, schoolId)
+      if (!classIds || classIds.length === 0) {
+        const emptyWb = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(emptyWb, XLSX.utils.json_to_sheet([]), 'Students')
+        XLSX.utils.book_append_sheet(
+          emptyWb,
+          XLSX.utils.json_to_sheet([
+            { Key: 'Template Version', Value: STUDENT_IMPORT_TEMPLATE_VERSION },
+            { Key: 'Exported At', Value: new Date().toISOString() },
+            { Key: 'School ID', Value: schoolId },
+            { Key: 'Campus ID', Value: campus.id },
+            { Key: 'Campus Name', Value: campus.name },
+            { Key: 'Total Rows', Value: 0 },
+          ]),
+          'Metadata',
+        )
+        return XLSX.write(emptyWb, { type: 'buffer', bookType: 'xlsx' })
+      }
+      andWhere.push({ classId: { in: classIds } })
+    }
+
+    if (query.academicYearId) {
+      andWhere.push({
+        enrollments: {
+          some: { academicYearId: query.academicYearId },
+        },
+      })
+    }
+    if (query.classId) andWhere.push({ classId: query.classId })
+    if (query.sectionId) andWhere.push({ sectionId: query.sectionId })
+    if (query.status) andWhere.push({ status: query.status })
+    if (query.regNo) andWhere.push({ rollNumber: { contains: query.regNo, mode: 'insensitive' } })
+    if (query.search) {
+      andWhere.push({
+        OR: [
+          { rollNumber: { contains: query.search, mode: 'insensitive' } },
+          { firstName: { contains: query.search, mode: 'insensitive' } },
+          { lastName: { contains: query.search, mode: 'insensitive' } },
+          { guardianName: { contains: query.search, mode: 'insensitive' } },
+        ],
+      })
+    }
+
+    const where: any = { AND: andWhere }
+
+    const students = await this.prisma.student.findMany({
+      where,
+      include: {
+        class: { select: { id: true, name: true, code: true, campus: { select: { id: true, name: true } } } },
+        section: { select: { id: true, name: true } },
+        parents: {
+          include: {
+            parent: { select: { firstName: true, lastName: true, phone: true } },
+          },
+          take: 1,
+          orderBy: { isPrimary: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    const rows = students.map((student) => {
+      const parent = student.parents?.[0]?.parent
+      return {
+        'Roll Number': student.rollNumber,
+        'First Name': student.firstName,
+        'Last Name': student.lastName,
+        Gender: student.gender || '',
+        Status: student.status,
+        'Date Of Birth': student.dateOfBirth ? new Date(student.dateOfBirth).toISOString().slice(0, 10) : '',
+        'Class Name': student.class?.name || '',
+        'Class Code': student.class?.code || '',
+        'Section Name': student.section?.name || '',
+        'Guardian Name': student.guardianName || (parent ? `${parent.firstName} ${parent.lastName}` : ''),
+        'Guardian Phone': student.guardianPhone || parent?.phone || '',
+        'Guardian Email': student.guardianEmail || '',
+        Phone: student.phone || '',
+        CNIC: student.cnic || '',
+        Address: student.address || '',
+        Group: student.group || '',
+        Religion: student.religion || '',
+        'Admission Note': student.admissionNote || '',
+        Campus: student.class?.campus?.name || '',
+      }
+    })
+
+    const workbook = XLSX.utils.book_new()
+    const studentSheet = XLSX.utils.json_to_sheet(rows)
+    XLSX.utils.book_append_sheet(workbook, studentSheet, 'Students')
+
+    const metadataSheet = XLSX.utils.json_to_sheet([
+      { Key: 'Template Version', Value: STUDENT_IMPORT_TEMPLATE_VERSION },
+      { Key: 'Exported At', Value: new Date().toISOString() },
+      { Key: 'School ID', Value: schoolId },
+      { Key: 'Campus ID', Value: campus.id },
+      { Key: 'Campus Name', Value: campus.name },
+      { Key: 'Total Rows', Value: rows.length },
+    ])
+    XLSX.utils.book_append_sheet(workbook, metadataSheet, 'Metadata')
+
+    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
   }
 
   async create(schoolId: string, dto: CreateStudentDto, campusId?: string) {

@@ -261,6 +261,7 @@ export class AnalyticsService {
         const arrearsTotal = (arrearsAll._sum?.totalAmount ?? 0) - (arrearsAll._sum?.paidAmount ?? 0)
         const yearlyReceived = yearlyCollection._sum?.amount ?? 0
         const yearlyInvoiced = (pendingFeeAll._sum?.totalAmount ?? 0) + (yearlyReceived > 0 ? yearlyReceived : 0)
+        const totalSections = allClasses.reduce((sum, cls) => sum + cls.sections.length, 0)
 
         return {
             people: {
@@ -273,6 +274,7 @@ export class AnalyticsService {
                 academicYears: totalAcademicYears,
                 campuses: totalCampuses,
                 classes: totalClasses,
+                sections: totalSections,
                 subjects: totalSubjects,
                 teachers: totalTeachers,
                 students: totalStudents,

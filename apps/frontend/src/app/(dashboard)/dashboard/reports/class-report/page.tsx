@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { reportsService } from '@/services/analytics.service'
 import { academicsService } from '@/services/academics.service'
 import { useSession } from '@/context/session-context'
+import { escapePrintHtml, multilineToPrintHtml, printFormalReport } from '@/lib/report-print'
 import { FileText, GraduationCap, Loader2, Plus, Printer, Trash2, Users } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -21,12 +22,22 @@ type ClassOption = {
   code?: string
 }
 
+type SectionOption = {
+  id: string
+  name: string
+}
+
 type ClassReportResponse = {
   class?: {
     id: string
     name: string
     code?: string
   }
+  scope?: 'CLASS' | 'SECTION'
+  section?: {
+    id: string
+    name: string
+  } | null
   totalStudents: number
   sectionBreakdown: Array<{
     id: string
@@ -97,7 +108,9 @@ export default function ClassReportPage() {
   const { selectedYear } = useSession()
 
   const [classes, setClasses] = useState<ClassOption[]>([])
+  const [sections, setSections] = useState<SectionOption[]>([])
   const [selectedClassId, setSelectedClassId] = useState('')
+  const [selectedSectionId, setSelectedSectionId] = useState('')
 
   const [templateId, setTemplateId] = useState('institutional')
   const [customSections, setCustomSections] = useState<CustomSection[]>([
@@ -105,6 +118,7 @@ export default function ClassReportPage() {
   ])
 
   const [loadingClasses, setLoadingClasses] = useState(false)
+  const [loadingSections, setLoadingSections] = useState(false)
   const [loadingReport, setLoadingReport] = useState(false)
   const [reportData, setReportData] = useState<ClassReportResponse | null>(null)
 
@@ -139,6 +153,47 @@ export default function ClassReportPage() {
       setSelectedClassId(classes[0].id)
     }
   }, [classes, selectedClassId])
+
+  useEffect(() => {
+    if (!selectedClassId) {
+      setSections([])
+      setSelectedSectionId('')
+      return
+    }
+
+    const loadSections = async () => {
+      setLoadingSections(true)
+      try {
+        const res = await academicsService.getSectionsByClass(selectedClassId)
+        if (!res.success || !res.data) {
+          setSections([])
+          setSelectedSectionId('')
+          toast.error(res.message || 'Unable to load sections')
+          return
+        }
+
+        const list = Array.isArray(res.data) ? res.data : (res.data?.data || [])
+        const options: SectionOption[] = list.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+        }))
+
+        setSections(options)
+        setSelectedSectionId((prev) => {
+          if (prev && options.some((item) => item.id === prev)) return prev
+          return options[0]?.id || ''
+        })
+      } finally {
+        setLoadingSections(false)
+      }
+    }
+
+    loadSections()
+  }, [selectedClassId])
+
+  useEffect(() => {
+    setReportData(null)
+  }, [selectedClassId, selectedSectionId])
 
   useEffect(() => {
     try {
@@ -223,18 +278,127 @@ export default function ClassReportPage() {
       return
     }
 
+    if (!selectedSectionId) {
+      toast.error('Please select a section first')
+      return
+    }
+
     setLoadingReport(true)
     try {
-      const res = await reportsService.generateClassReport(selectedClassId)
+      const res = await reportsService.generateClassReport(selectedClassId, selectedSectionId)
       if (!res.success || !res.data) {
         toast.error(res.message || 'Unable to generate class report')
         return
       }
 
       setReportData(res.data as ClassReportResponse)
-      toast.success('Class report loaded')
+      toast.success('Section-wise class report loaded')
     } finally {
       setLoadingReport(false)
+    }
+  }
+
+  const handlePrintReport = () => {
+    if (!reportData) {
+      toast.error('Generate the report first to print')
+      return
+    }
+
+    const className = reportData.class?.name || selectedClass?.name || 'Selected Class'
+    const sectionName = reportData.section?.name || sections.find((item) => item.id === selectedSectionId)?.name || '-'
+    const generatedAt = new Date(reportData.generatedAt).toLocaleString()
+
+    const attendanceTableHtml = reportData.attendanceBreakdown.length
+      ? `<table class="report-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${reportData.attendanceBreakdown
+              .map((item) => `<tr>
+                <td>${escapePrintHtml(STATUS_LABELS[item.status] || item.status)}</td>
+                <td>${escapePrintHtml(item.count)}</td>
+              </tr>`)
+              .join('')}
+          </tbody>
+        </table>`
+      : '<div class="empty">No attendance records available for this section.</div>'
+
+    const sectionSnapshotHtml = reportData.sectionBreakdown.length
+      ? `<table class="report-table">
+          <thead>
+            <tr>
+              <th>Section</th>
+              <th>Students</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${reportData.sectionBreakdown
+              .map((row) => `<tr>
+                <td>${escapePrintHtml(row.name)}</td>
+                <td>${escapePrintHtml(row.totalStudents)}</td>
+              </tr>`)
+              .join('')}
+          </tbody>
+        </table>`
+      : '<div class="empty">No section snapshot data found.</div>'
+
+    const notesHtml = customSections
+      .map((section) => `<article class="note-block">
+          <h4 class="note-title">${escapePrintHtml(section.title || 'Custom Section')}</h4>
+          <p class="note-content">${multilineToPrintHtml(section.content || 'No content provided.')}</p>
+        </article>`)
+      .join('')
+
+    const printed = printFormalReport({
+      title: 'Class Report',
+      subtitle: `${selectedYear?.name || 'Academic Year'} | Template: ${activeTemplate.name}`,
+      contentHtml: `
+        <section class="section">
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <p class="kpi-label">Class</p>
+              <p class="kpi-value">${escapePrintHtml(className)}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Section</p>
+              <p class="kpi-value">${escapePrintHtml(sectionName)}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Students</p>
+              <p class="kpi-value">${escapePrintHtml(reportData.totalStudents)}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Attendance Rate</p>
+              <p class="kpi-value">${escapePrintHtml(reportData.attendanceRate)}%</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Attendance Breakdown</h2>
+          ${attendanceTableHtml}
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Section Snapshot</h2>
+          ${sectionSnapshotHtml}
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Custom Notes</h2>
+          ${notesHtml || '<div class="empty">No custom notes added.</div>'}
+        </section>
+
+        <div class="footer-meta">Generated on ${escapePrintHtml(generatedAt)}</div>
+      `,
+    })
+
+    if (!printed) {
+      toast.error('Please allow popups to print report')
     }
   }
 
@@ -245,12 +409,12 @@ export default function ClassReportPage() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">Class Report</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Build class-level reports with section distribution and attendance insights.
+              Build section-wise class reports with attendance insights from live records.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline">{selectedYear?.name || 'Academic Year'}</Badge>
-            <Button variant="outline" onClick={() => window.print()} disabled={!reportData}>
+            <Button variant="outline" onClick={handlePrintReport} disabled={!reportData}>
               <Printer className="mr-2 h-4 w-4" /> Print / Save PDF
             </Button>
           </div>
@@ -280,9 +444,29 @@ export default function ClassReportPage() {
                   </Select>
                 </div>
 
-                <Button className="w-full" onClick={generateReport} disabled={!selectedClassId || loadingReport}>
+                <div className="space-y-2">
+                  <Label>Section</Label>
+                  <Select
+                    value={selectedSectionId}
+                    onValueChange={setSelectedSectionId}
+                    disabled={!selectedClassId || loadingSections || sections.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={loadingSections ? 'Loading sections...' : 'Select section'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sections.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button className="w-full" onClick={generateReport} disabled={!selectedClassId || !selectedSectionId || loadingReport}>
                   {loadingReport ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}
-                  Generate Class Report
+                  Generate Section Report
                 </Button>
               </CardContent>
             </Card>
@@ -347,7 +531,7 @@ export default function ClassReportPage() {
           <Card className={activeTemplate.accentClass}>
             {!reportData ? (
               <CardContent className="p-10 text-center text-muted-foreground">
-                Generate a class report to preview attendance and section distribution.
+                Generate a section-wise class report to preview attendance and student totals.
               </CardContent>
             ) : (
               <div className="space-y-6 p-6">
@@ -356,6 +540,9 @@ export default function ClassReportPage() {
                     <h2 className="text-xl font-semibold text-foreground">
                       {reportData.class?.name || selectedClass?.name || 'Selected Class'}
                     </h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Section: {reportData.section?.name || sections.find((item) => item.id === selectedSectionId)?.name || '-'}
+                    </p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       Code: {reportData.class?.code || selectedClass?.code || '-'}
                     </p>
@@ -367,7 +554,7 @@ export default function ClassReportPage() {
 
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-lg border bg-background p-3 text-center">
-                    <p className="text-xs text-muted-foreground">Total Students</p>
+                    <p className="text-xs text-muted-foreground">Students in Section</p>
                     <p className="text-lg font-semibold">{reportData.totalStudents}</p>
                   </div>
                   <div className="rounded-lg border bg-background p-3 text-center">
@@ -407,10 +594,10 @@ export default function ClassReportPage() {
                 </div>
 
                 <div className="space-y-3">
-                  <h3 className="text-base font-semibold text-foreground">Section Distribution</h3>
+                  <h3 className="text-base font-semibold text-foreground">Section Snapshot</h3>
                   {reportData.sectionBreakdown.length === 0 ? (
                     <div className="rounded-lg border bg-background p-4 text-sm text-muted-foreground">
-                      No active sections found in this class.
+                      No active section data found for this selection.
                     </div>
                   ) : (
                     <div className="overflow-x-auto rounded-lg border bg-background">
@@ -461,7 +648,7 @@ export default function ClassReportPage() {
           </CardHeader>
           <CardContent>
             {reportData ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">Class</p>
                   <p className="font-medium">{reportData.class?.name || '-'}</p>
@@ -475,13 +662,17 @@ export default function ClassReportPage() {
                   <p className="font-medium">{reportData.sectionBreakdown.length}</p>
                 </div>
                 <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Section</p>
+                  <p className="font-medium">{reportData.section?.name || '-'}</p>
+                </div>
+                <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">Template</p>
                   <p className="font-medium">{activeTemplate.name}</p>
                 </div>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Select a class and generate the report to see contextual details.
+                Select class and section, then generate the report to see contextual details.
               </p>
             )}
           </CardContent>

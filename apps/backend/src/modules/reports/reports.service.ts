@@ -113,7 +113,7 @@ export class ReportsService {
         }
     }
 
-    async generateClassReport(schoolId: string, classId: string) {
+    async generateClassReport(schoolId: string, classId: string, sectionId?: string) {
         const classRecord = await this.prisma.class.findFirst({
             where: { id: classId, schoolId, deletedAt: null },
             select: {
@@ -130,16 +130,43 @@ export class ReportsService {
 
         if (!classRecord) return null
 
+        const normalizedSectionId = sectionId?.trim() || null
+        const selectedSection = normalizedSectionId
+            ? classRecord.sections.find((section) => section.id === normalizedSectionId)
+            : null
+
+        if (normalizedSectionId && !selectedSection) {
+            throw new BadRequestException('Selected section does not belong to this class')
+        }
+
+        const studentWhere: Prisma.StudentWhereInput = {
+            schoolId,
+            classId,
+            status: 'ACTIVE',
+            deletedAt: null,
+            ...(selectedSection ? { sectionId: selectedSection.id } : {}),
+        }
+
+        const attendanceWhere: Prisma.AttendanceWhereInput = {
+            schoolId,
+            student: {
+                classId,
+                ...(selectedSection ? { sectionId: selectedSection.id } : {}),
+            },
+        }
+
+        const sectionsForReport = selectedSection ? [selectedSection] : classRecord.sections
+
         const [studentsBySection, students, attendanceStats] = await Promise.all([
             this.prisma.student.groupBy({
                 by: ['sectionId'],
-                where: { schoolId, classId, status: 'ACTIVE', deletedAt: null },
+                where: studentWhere,
                 _count: { _all: true },
             }),
-            this.prisma.student.count({ where: { schoolId, classId, status: 'ACTIVE', deletedAt: null } }),
+            this.prisma.student.count({ where: studentWhere }),
             this.prisma.attendance.groupBy({
                 by: ['status'],
-                where: { schoolId, student: { classId } },
+                where: attendanceWhere,
                 _count: { status: true },
             }),
         ])
@@ -166,8 +193,15 @@ export class ReportsService {
                 name: classRecord.name,
                 code: classRecord.code,
             },
+            scope: selectedSection ? 'SECTION' : 'CLASS',
+            section: selectedSection
+                ? {
+                    id: selectedSection.id,
+                    name: selectedSection.name,
+                }
+                : null,
             totalStudents: students,
-            sectionBreakdown: classRecord.sections.map((section) => ({
+            sectionBreakdown: sectionsForReport.map((section) => ({
                 id: section.id,
                 name: section.name,
                 totalStudents: sectionStudentMap.get(section.id) || 0,

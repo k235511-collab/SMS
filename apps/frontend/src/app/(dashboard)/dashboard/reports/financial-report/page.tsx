@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { reportsService } from '@/services/analytics.service'
 import { useSession } from '@/context/session-context'
+import { escapePrintHtml, multilineToPrintHtml, printFormalReport } from '@/lib/report-print'
 import { DollarSign, FileText, Loader2, Plus, Printer, Receipt, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -208,6 +209,158 @@ export default function FinancialReportPage() {
     }
   }
 
+  const handlePrintReport = () => {
+    if (!reportData) {
+      toast.error('Generate the report first to print')
+      return
+    }
+
+    const invoiceStatusTableHtml = reportData.invoiceStatusBreakdown.length
+      ? `<table class="report-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Count</th>
+              <th>Amount</th>
+              <th>Paid</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${reportData.invoiceStatusBreakdown
+              .map((item) => `<tr>
+                <td>${escapePrintHtml(item.status)}</td>
+                <td>${escapePrintHtml(item.count)}</td>
+                <td>${escapePrintHtml(formatCurrency(item.totalAmount))}</td>
+                <td>${escapePrintHtml(formatCurrency(item.paidAmount))}</td>
+              </tr>`)
+              .join('')}
+          </tbody>
+        </table>`
+      : '<div class="empty">No invoice records found for selected period.</div>'
+
+    const paymentMethodTableHtml = reportData.paymentMethodBreakdown.length
+      ? `<table class="report-table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Payments</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${reportData.paymentMethodBreakdown
+              .map((item) => `<tr>
+                <td>${escapePrintHtml(item.method)}</td>
+                <td>${escapePrintHtml(item.count)}</td>
+                <td>${escapePrintHtml(formatCurrency(item.amount))}</td>
+              </tr>`)
+              .join('')}
+          </tbody>
+        </table>`
+      : '<div class="empty">No payment method records found.</div>'
+
+    const recentPaymentsTableHtml = reportData.recentPayments.length
+      ? `<table class="report-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Student</th>
+              <th>Invoice</th>
+              <th>Method</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${reportData.recentPayments
+              .map((payment) => `<tr>
+                <td>${escapePrintHtml(new Date(payment.paidAt).toLocaleDateString())}</td>
+                <td>${escapePrintHtml(`${payment.student.firstName} ${payment.student.lastName} (${payment.student.rollNumber})`)}</td>
+                <td>${escapePrintHtml(payment.invoice.invoiceNo)}</td>
+                <td>${escapePrintHtml(payment.method)}</td>
+                <td>${escapePrintHtml(formatCurrency(payment.amount))}</td>
+              </tr>`)
+              .join('')}
+          </tbody>
+        </table>`
+      : '<div class="empty">No recent payments available.</div>'
+
+    const notesHtml = customSections
+      .map((section) => `<article class="note-block">
+          <h4 class="note-title">${escapePrintHtml(section.title || 'Custom Section')}</h4>
+          <p class="note-content">${multilineToPrintHtml(section.content || 'No content provided.')}</p>
+        </article>`)
+      .join('')
+
+    const periodLabel = reportData.period.startDate && reportData.period.endDate
+      ? `${reportData.period.startDate} to ${reportData.period.endDate}`
+      : 'All available records'
+
+    const printed = printFormalReport({
+      title: 'Financial Report',
+      subtitle: `${selectedYear?.name || 'Academic Year'} | Template: ${activeTemplate.name}`,
+      contentHtml: `
+        <section class="section">
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <p class="kpi-label">Total Invoiced</p>
+              <p class="kpi-value">${escapePrintHtml(formatCurrency(reportData.totals.totalInvoiced))}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Total Paid</p>
+              <p class="kpi-value">${escapePrintHtml(formatCurrency(reportData.totals.totalPaid))}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Outstanding</p>
+              <p class="kpi-value">${escapePrintHtml(formatCurrency(reportData.totals.outstanding))}</p>
+            </div>
+            <div class="kpi-card">
+              <p class="kpi-label">Collection Rate</p>
+              <p class="kpi-value">${escapePrintHtml(reportData.totals.collectionRate)}%</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Period</h2>
+          <table class="report-table">
+            <tbody>
+              <tr>
+                <th>Range</th>
+                <td>${escapePrintHtml(periodLabel)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Invoice Status Breakdown</h2>
+          ${invoiceStatusTableHtml}
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Payment Methods</h2>
+          ${paymentMethodTableHtml}
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Recent Payments</h2>
+          ${recentPaymentsTableHtml}
+        </section>
+
+        <section class="section">
+          <h2 class="section-title">Custom Notes</h2>
+          ${notesHtml || '<div class="empty">No custom notes added.</div>'}
+        </section>
+
+        <div class="footer-meta">Generated on ${escapePrintHtml(new Date(reportData.generatedAt).toLocaleString())}</div>
+      `,
+    })
+
+    if (!printed) {
+      toast.error('Please allow popups to print report')
+    }
+  }
+
   return (
     <ProtectedRoute permission="reports:read">
       <div className="space-y-6">
@@ -220,7 +373,7 @@ export default function FinancialReportPage() {
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline">{selectedYear?.name || 'Academic Year'}</Badge>
-            <Button variant="outline" onClick={() => window.print()} disabled={!reportData}>
+            <Button variant="outline" onClick={handlePrintReport} disabled={!reportData}>
               <Printer className="mr-2 h-4 w-4" /> Print / Save PDF
             </Button>
           </div>

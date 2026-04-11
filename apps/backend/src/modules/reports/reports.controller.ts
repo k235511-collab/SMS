@@ -28,8 +28,12 @@ export class ReportsController {
 
     @Get('class/:classId')
     @ApiOperation({ summary: 'Generate class report' })
-    generateClassReport(@Param('classId') classId: string, @TenantId() schoolId: string) {
-        return this.reportsService.generateClassReport(schoolId, classId)
+    generateClassReport(
+        @Param('classId') classId: string,
+        @TenantId() schoolId: string,
+        @Query('sectionId') sectionId?: string,
+    ) {
+        return this.reportsService.generateClassReport(schoolId, classId, sectionId)
     }
 
     @Get('attendance')

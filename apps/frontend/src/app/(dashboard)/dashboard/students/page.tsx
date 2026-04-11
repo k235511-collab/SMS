@@ -30,8 +30,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { api } from '@/lib/api-client'
+import { studentsService, type StudentImportPreview } from '@/services/students.service'
 import { cn } from '@/lib/utils'
-import { Plus, Search, MoreHorizontal, Pencil, Trash2, FileText, ArrowUpRight, AlertTriangle, X, CreditCard, LogOut } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Pencil, Trash2, FileText, ArrowUpRight, AlertTriangle, X, CreditCard, LogOut, Upload, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { StudentStats } from './components/student-stats'
 import { StudentFilters } from './components/student-filters'
@@ -102,6 +103,17 @@ function formatPakistaniPhone(phone: string): string {
   return phone
 }
 
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
+
 export default function StudentsPage() {
   const router = useRouter()
   const { selectedYear, academicYears, selectedCampus, isLoading: sessionLoading } = useSession()
@@ -138,6 +150,16 @@ export default function StudentsPage() {
   const [leavingStudent, setLeavingStudent] = useState<Student | null>(null)
   const [leaveForm, setLeaveForm] = useState({ leaveDate: '', leaveReason: '' })
   const [markingAsLeft, setMarkingAsLeft] = useState(false)
+
+  // ── Import / Export state ──
+  const importFileInputRef = useRef<HTMLInputElement>(null)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importPreview, setImportPreview] = useState<StudentImportPreview | null>(null)
+  const [previewingImport, setPreviewingImport] = useState(false)
+  const [importingStudents, setImportingStudents] = useState(false)
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false)
+  const [exportingStudents, setExportingStudents] = useState(false)
 
   // Create/Edit Form State
   const [form, setForm] = useState({
@@ -442,44 +464,106 @@ export default function StudentsPage() {
     }, true)
   }
 
-  const handleExport = () => {
-    if (students.length === 0) return
-    const headers = ['Roll Number', 'First Name', 'Last Name', 'Class', 'Section', 'Gender', 'Status', 'Father Name', 'WA No.']
-    const escapeCsvField = (field: string) => {
-      if (field.includes(',') || field.includes('"') || field.includes('\n')) {
-        return '"' + field.replace(/"/g, '""') + '"'
-      }
-      return field
+  const resetImportState = () => {
+    setImportFile(null)
+    setImportPreview(null)
+    if (importFileInputRef.current) {
+      importFileInputRef.current.value = ''
     }
-    const rows = students.map(s => {
-      const parent = s.parents?.[0]?.parent
-      const fatherName = parent ? `${parent.firstName} ${parent.lastName}` : (s.guardianName || '')
-      const waNo = s.phone || s.guardianPhone || ''
-      return [
-        s.rollNumber,
-        s.firstName,
-        s.lastName,
-        s.class?.name || '',
-        s.section?.name || '',
-        s.gender || '',
-        s.status,
-        fatherName,
-        waNo ? formatPakistaniPhone(waNo) : '',
-      ].map(escapeCsvField)
-    })
+  }
 
-    const csvContent = "data:text/csv;charset=utf-8,"
-      + headers.map(escapeCsvField).join(",") + "\n"
-      + rows.map(e => e.join(",")).join("\n")
+  const handleDownloadImportTemplate = async () => {
+    setDownloadingTemplate(true)
+    try {
+      const { blob, fileName } = await studentsService.downloadImportTemplate()
+      downloadBlob(blob, fileName)
+      toast.success('Student import template downloaded')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to download import template')
+    } finally {
+      setDownloadingTemplate(false)
+    }
+  }
 
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement("a")
-    link.setAttribute("href", encodedUri)
-    link.setAttribute("download", `students_export_${new Date().toISOString().split('T')[0]}.csv`)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    toast.success('Exporting CSV...')
+  const handlePreviewImport = async () => {
+    if (!importFile) {
+      toast.error('Please choose an Excel file first')
+      return
+    }
+
+    setPreviewingImport(true)
+    try {
+      const preview = await studentsService.previewImport(importFile)
+      setImportPreview(preview)
+      if (preview.errors.length > 0) {
+        toast.warning(`Validation completed with ${preview.errors.length} issue(s)`)
+      } else {
+        toast.success(`Validation passed for ${preview.summary.validRows} row(s)`)
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to preview import file')
+    } finally {
+      setPreviewingImport(false)
+    }
+  }
+
+  const handleCommitImport = async () => {
+    if (!importFile) {
+      toast.error('Please choose an Excel file first')
+      return
+    }
+
+    setImportingStudents(true)
+    try {
+      const result = await studentsService.commitImport(importFile)
+      setImportPreview((prev) =>
+        prev
+          ? {
+            ...prev,
+            summary: result.summary,
+            errors: result.errors,
+          }
+          : null,
+      )
+
+      if (result.failed > 0) {
+        toast.warning(`Imported ${result.imported} row(s), ${result.failed} row(s) failed`)
+      } else {
+        toast.success(`Imported ${result.imported} student(s) successfully`)
+      }
+
+      if (result.imported > 0) {
+        fetchStudents()
+        fetchStats()
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to import students')
+    } finally {
+      setImportingStudents(false)
+    }
+  }
+
+  const handleExport = async () => {
+    setExportingStudents(true)
+    try {
+      const { blob, fileName } = await studentsService.exportExcel({
+        search: search || undefined,
+        classId: filters.classId || undefined,
+        sectionId: filters.sectionId || undefined,
+        status: filters.status || undefined,
+        regNo: filters.regNo || undefined,
+        balanceMin: filters.balanceMin || undefined,
+        balanceMax: filters.balanceMax || undefined,
+        academicYearId: selectedYear?.id || undefined,
+      })
+
+      downloadBlob(blob, fileName)
+      toast.success('Students exported to Excel')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to export students')
+    } finally {
+      setExportingStudents(false)
+    }
   }
 
   const handleBulkDelete = async () => {
@@ -807,8 +891,20 @@ export default function StudentsPage() {
             <p className="mt-1 text-sm text-muted-foreground">Manage student enrollment and records</p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={handleExport}><FileText className="mr-2 h-4 w-4" />Export CSV</Button>
+            <Button variant="outline" onClick={handleExport} disabled={exportingStudents}>
+              <Upload className="mr-2 h-4 w-4" />
+              {exportingStudents ? 'Exporting...' : 'Export Excel'}
+            </Button>
             <PermissionGate permission="students:create">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  resetImportState()
+                  setImportDialogOpen(true)
+                }}
+              >
+                <Download className="mr-2 h-4 w-4" />Import Excel
+              </Button>
               <Button onClick={() => {
                 setEditingStudent(null)
                 setForm({
@@ -882,6 +978,131 @@ export default function StudentsPage() {
           />
         </div>
       </div>
+
+      <Dialog
+        open={importDialogOpen}
+        onOpenChange={(open) => {
+          setImportDialogOpen(open)
+          if (!open) {
+            resetImportState()
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Bulk Import Students</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={(event) => {
+                const selected = event.target.files?.[0] || null
+                setImportFile(selected)
+                setImportPreview(null)
+              }}
+            />
+
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+              Download the template, fill students in the <span className="font-medium text-foreground">Students</span> sheet,
+              then upload it here to validate and import.
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={handleDownloadImportTemplate} disabled={downloadingTemplate}>
+                <Download className="mr-2 h-4 w-4" />
+                {downloadingTemplate ? 'Downloading...' : 'Download Template'}
+              </Button>
+              <Button variant="outline" onClick={() => importFileInputRef.current?.click()}>
+                <Upload className="mr-2 h-4 w-4" />Choose Excel File
+              </Button>
+              <span className="text-sm text-muted-foreground truncate max-w-[320px]">
+                {importFile ? importFile.name : 'No file selected'}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={handlePreviewImport} disabled={!importFile || previewingImport || importingStudents}>
+                {previewingImport ? 'Validating...' : 'Preview Import'}
+              </Button>
+              <Button onClick={handleCommitImport} disabled={!importFile || importingStudents || previewingImport}>
+                {importingStudents ? 'Importing...' : 'Import Valid Rows'}
+              </Button>
+            </div>
+
+            {importPreview && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Rows</p>
+                    <p className="text-xl font-semibold">{importPreview.summary.totalRows}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Valid Rows</p>
+                    <p className="text-xl font-semibold text-emerald-600">{importPreview.summary.validRows}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Invalid Rows</p>
+                    <p className="text-xl font-semibold text-red-600">{importPreview.summary.invalidRows}</p>
+                  </div>
+                </div>
+
+                {importPreview.validRows.length > 0 && (
+                  <div className="rounded-lg border">
+                    <div className="border-b px-3 py-2 text-sm font-medium">Sample Valid Rows</div>
+                    <div className="max-h-56 overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted/40 text-left">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">Row</th>
+                            <th className="px-3 py-2 font-medium">Roll</th>
+                            <th className="px-3 py-2 font-medium">Name</th>
+                            <th className="px-3 py-2 font-medium">Class</th>
+                            <th className="px-3 py-2 font-medium">Section</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importPreview.validRows.slice(0, 15).map((row) => (
+                            <tr key={`${row.rowNumber}-${row.rollNumber}`} className="border-t">
+                              <td className="px-3 py-2">{row.rowNumber}</td>
+                              <td className="px-3 py-2">{row.rollNumber}</td>
+                              <td className="px-3 py-2">{row.firstName} {row.lastName}</td>
+                              <td className="px-3 py-2">{row.className}</td>
+                              <td className="px-3 py-2">{row.sectionName}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {importPreview.errors.length > 0 && (
+                  <div className="rounded-lg border border-red-200 bg-red-50/60 p-3">
+                    <div className="text-sm font-medium text-red-700">Validation Errors</div>
+                    <div className="mt-2 max-h-48 space-y-1 overflow-auto text-sm text-red-700">
+                      {importPreview.errors.slice(0, 50).map((error, index) => (
+                        <p key={`${error.rowNumber}-${error.field}-${index}`}>
+                          Row {error.rowNumber} - {error.field}: {error.message}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Close</Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-3xl overflow-y-auto max-h-[90vh]">

@@ -71,6 +71,8 @@ export interface DataTableProps<TData, TValue> {
 
   /** Show pagination controls (default true) */
   showPagination?: boolean
+  /** Keep pagination and count bar pinned to bottom while scrolling */
+  pinPaginationToBottom?: boolean
   /** Rows per page options */
   pageSizeOptions?: number[]
   /** Slot above table (search, filters, actions) */
@@ -104,6 +106,7 @@ export function DataTable<TData, TValue>({
   rowSelection: controlledRowSelection,
   onRowSelectionChange,
   showPagination = true,
+  pinPaginationToBottom = false,
   pageSizeOptions = [10, 20, 30, 50, 100],
   toolbar,
   emptyMessage = 'No results.',
@@ -236,7 +239,13 @@ export function DataTable<TData, TValue>({
 
       {/* ── Pagination ─────────────────────────────────────────────────────── */}
       {showPagination && (
-        <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-between px-2">
+        <div
+          className={cn(
+            'flex flex-col items-center gap-4 sm:flex-row sm:justify-between px-2',
+            pinPaginationToBottom &&
+              'sticky bottom-0 z-20 rounded-md border border-border bg-background/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+          )}
+        >
           {/* Row selection info */}
           <div className="flex-1 text-sm text-muted-foreground">
             {enableRowSelection && (

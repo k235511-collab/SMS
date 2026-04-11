@@ -10,7 +10,10 @@ export const analyticsService = {
 export const reportsService = {
     getAvailableReports: () => api.get<any>('/reports'),
     generateStudentReport: (studentId: string) => api.get<any>(`/reports/student/${studentId}`),
-    generateClassReport: (classId: string) => api.get<any>(`/reports/class/${classId}`),
+    generateClassReport: (classId: string, sectionId?: string) =>
+        api.get<any>(`/reports/class/${classId}`, {
+            params: sectionId ? { sectionId } : undefined,
+        }),
     generateAttendanceReport: (sectionId: string, startDate: string, endDate: string) =>
         api.get<any>('/reports/attendance', { params: { sectionId, startDate, endDate } }),
     generateFinancialReport: (startDate?: string, endDate?: string) =>
