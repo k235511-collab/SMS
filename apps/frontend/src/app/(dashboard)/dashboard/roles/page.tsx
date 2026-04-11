@@ -43,6 +43,8 @@ interface Permission {
 
 export default function RolesPage() {
   const HIDDEN_PERMISSION_MODULES = new Set([
+    'assignment',
+    'assignments',
     'audit',
     'backup',
     'feature-flag',

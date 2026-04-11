@@ -35,7 +35,6 @@ import { TimetableModule } from './modules/timetable/timetable.module'
 import { NotificationsModule } from './modules/notifications/notifications.module'
 
 // Enterprise modules
-import { AssignmentsModule } from './modules/assignments/assignments.module'
 import { GradesModule } from './modules/grades/grades.module'
 import { CalendarModule } from './modules/calendar/calendar.module'
 import { CommunicationsModule } from './modules/communications/communications.module'
@@ -99,7 +98,6 @@ import { join } from 'path'
     NotificationsModule,
 
     // Enterprise modules
-    AssignmentsModule,
     GradesModule,
     CalendarModule,
     CommunicationsModule,
