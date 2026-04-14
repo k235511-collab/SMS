@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import type { RowSelectionState } from '@tanstack/react-table'
 import { ProtectedRoute, PermissionGate } from '@/components/auth'
 import { DataTable, type ColumnDef, type PaginationState, SortableHeader } from '@/components/ui/data-table'
 import { Button } from '@/components/ui/button'
@@ -32,7 +33,7 @@ import {
 import { api } from '@/lib/api-client'
 import { studentsService, type StudentImportPreview } from '@/services/students.service'
 import { cn } from '@/lib/utils'
-import { Plus, Search, MoreHorizontal, Pencil, Trash2, FileText, ArrowUpRight, AlertTriangle, X, CreditCard, LogOut, Upload, Download } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Pencil, Trash2, FileText, ArrowUpRight, AlertTriangle, X, CreditCard, LogOut, Upload, Download, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { StudentStats } from './components/student-stats'
 import { StudentFilters } from './components/student-filters'
@@ -69,6 +70,11 @@ interface Student {
 interface PaginatedResponse {
   data: Student[]
   meta: { total: number; page: number; pageSize: number; totalPages: number }
+}
+
+interface ImportReadiness {
+  ready: boolean
+  issues: string[]
 }
 
 const genderOptions = ['MALE', 'FEMALE', 'OTHER']
@@ -132,7 +138,7 @@ export default function StudentsPage() {
     pageIndex: 0,
     pageSize: 20,
   })
-  const [rowSelection, setRowSelection] = useState({})
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingStudent, setEditingStudent] = useState<Student | null>(null)
   const [saving, setSaving] = useState(false)
@@ -159,7 +165,22 @@ export default function StudentsPage() {
   const [previewingImport, setPreviewingImport] = useState(false)
   const [importingStudents, setImportingStudents] = useState(false)
   const [downloadingTemplate, setDownloadingTemplate] = useState(false)
+  const [checkingImportReadiness, setCheckingImportReadiness] = useState(false)
+  const [importReadiness, setImportReadiness] = useState<ImportReadiness>({ ready: false, issues: [] })
   const [exportingStudents, setExportingStudents] = useState(false)
+
+  const selectedStudents = useMemo(() => {
+    const selectedIds = new Set(
+      Object.entries(rowSelection)
+        .filter(([, selected]) => Boolean(selected))
+        .map(([id]) => id),
+    )
+
+    if (selectedIds.size === 0) return []
+    return students.filter((student) => selectedIds.has(student.id))
+  }, [rowSelection, students])
+
+  const selectedCount = selectedStudents.length
 
   // Create/Edit Form State
   const [form, setForm] = useState({
@@ -277,6 +298,39 @@ export default function StudentsPage() {
   useCampusRefetch(() => {
     setPagination(prev => ({ ...prev, pageIndex: 0 }))
   }, [])
+
+  useEffect(() => {
+    setRowSelection({})
+  }, [
+    pagination.pageIndex,
+    pagination.pageSize,
+    search,
+    filters,
+    selectedYear?.id,
+    selectedCampus?.id,
+  ])
+
+  useEffect(() => {
+    const validIds = new Set(students.map((student) => student.id))
+
+    setRowSelection((prev) => {
+      let changed = false
+      const next: RowSelectionState = {}
+
+      for (const [id, selected] of Object.entries(prev)) {
+        if (!selected || !validIds.has(id)) {
+          changed = true
+          continue
+        }
+        next[id] = true
+      }
+
+      if (!changed && Object.keys(next).length === Object.keys(prev).length) {
+        return prev
+      }
+      return next
+    })
+  }, [students])
 
   // Check for duplicate parent by CNIC or phone
   const checkParentDuplicate = useCallback(async (cnic: string, phone: string) => {
@@ -467,8 +521,98 @@ export default function StudentsPage() {
   const resetImportState = () => {
     setImportFile(null)
     setImportPreview(null)
+    setImportReadiness({ ready: false, issues: [] })
+    setCheckingImportReadiness(false)
     if (importFileInputRef.current) {
       importFileInputRef.current.value = ''
+    }
+  }
+
+  const evaluateImportReadiness = useCallback(async (): Promise<ImportReadiness> => {
+    const issues: string[] = []
+
+    if (!selectedCampus?.id) {
+      issues.push('Select a campus before importing students.')
+      return { ready: false, issues }
+    }
+
+    if (!selectedYear && academicYears.length === 0) {
+      issues.push('Create an academic year and set it as current before importing students.')
+    }
+
+    try {
+      const classesRes = await api.get<any>('/academics/classes?pageSize=200')
+      if (!classesRes.success) {
+        issues.push(classesRes.message || 'Unable to load classes for the selected campus.')
+        return { ready: false, issues }
+      }
+
+      const classesList = Array.isArray(classesRes.data)
+        ? classesRes.data
+        : (Array.isArray(classesRes.data?.data) ? classesRes.data.data : [])
+
+      if (classesList.length === 0) {
+        issues.push('No classes found in the selected campus. Create classes before importing students.')
+        return { ready: false, issues }
+      }
+
+      const sectionChecks = await Promise.all(
+        classesList.map(async (cls: any) => {
+          const sectionsRes = await api.get<any>(`/academics/sections/class/${cls.id}`)
+          if (!sectionsRes.success) {
+            return {
+              className: cls.name || 'Unknown class',
+              sectionCount: 0,
+              failed: true,
+            }
+          }
+
+          const sectionsList = Array.isArray(sectionsRes.data)
+            ? sectionsRes.data
+            : (Array.isArray(sectionsRes.data?.data) ? sectionsRes.data.data : [])
+
+          return {
+            className: cls.name || 'Unknown class',
+            sectionCount: sectionsList.length,
+            failed: false,
+          }
+        }),
+      )
+
+      if (sectionChecks.some((item) => item.failed)) {
+        issues.push('Unable to verify sections for one or more classes. Please refresh and try again.')
+      }
+
+      const classesWithoutSections = sectionChecks
+        .filter((item) => item.sectionCount === 0)
+        .map((item) => item.className)
+
+      if (classesWithoutSections.length > 0) {
+        const preview = classesWithoutSections.slice(0, 4).join(', ')
+        const suffix = classesWithoutSections.length > 4 ? ', ...' : ''
+        issues.push(`Create at least one section for each class before importing students. Missing sections: ${preview}${suffix}`)
+      }
+    } catch {
+      issues.push('Unable to validate import prerequisites right now. Please try again.')
+    }
+
+    return { ready: issues.length === 0, issues }
+  }, [academicYears.length, selectedCampus?.id, selectedYear])
+
+  const handleOpenImportDialog = async () => {
+    resetImportState()
+    setImportDialogOpen(true)
+    setCheckingImportReadiness(true)
+
+    try {
+      const readiness = await evaluateImportReadiness()
+      setImportReadiness(readiness)
+
+      if (!readiness.ready) {
+        toast.warning('Complete class, section, and academic year setup to enable student import.')
+      }
+    } finally {
+      setCheckingImportReadiness(false)
     }
   }
 
@@ -485,19 +629,14 @@ export default function StudentsPage() {
     }
   }
 
-  const handlePreviewImport = async () => {
-    if (!importFile) {
-      toast.error('Please choose an Excel file first')
-      return
-    }
-
+  const previewImportFile = async (file: File, showSuccessToast = true) => {
     setPreviewingImport(true)
     try {
-      const preview = await studentsService.previewImport(importFile)
+      const preview = await studentsService.previewImport(file)
       setImportPreview(preview)
       if (preview.errors.length > 0) {
         toast.warning(`Validation completed with ${preview.errors.length} issue(s)`)
-      } else {
+      } else if (showSuccessToast) {
         toast.success(`Validation passed for ${preview.summary.validRows} row(s)`)
       }
     } catch (error) {
@@ -505,6 +644,15 @@ export default function StudentsPage() {
     } finally {
       setPreviewingImport(false)
     }
+  }
+
+  const handlePreviewImport = async () => {
+    if (!importFile) {
+      toast.error('Please choose an Excel file first')
+      return
+    }
+
+    await previewImportFile(importFile, true)
   }
 
   const handleCommitImport = async () => {
@@ -567,21 +715,21 @@ export default function StudentsPage() {
   }
 
   const handleBulkDelete = async () => {
-    const selectedIndices = Object.keys(rowSelection)
-    if (selectedIndices.length === 0) return
+    if (selectedCount === 0) return
+    const studentsToDelete = [...selectedStudents]
+
     confirmDialog.showConfirm(
       'Delete Students',
-      `Are you sure you want to delete ${selectedIndices.length} students? This cannot be undone.`,
+      `Are you sure you want to delete ${studentsToDelete.length} students? This cannot be undone.`,
       async () => {
         setLoading(true)
         let successCount = 0
-        for (const idx of selectedIndices) {
-          const student = students[parseInt(idx)]
-          if (student) {
-            const res = await api.delete(`/students/${student.id}`)
-            if (res.success) successCount++
-          }
+
+        for (const student of studentsToDelete) {
+          const res = await api.delete(`/students/${student.id}`)
+          if (res.success) successCount++
         }
+
         toast.success(`Deleted ${successCount} students`)
         setRowSelection({})
         fetchStudents()
@@ -643,8 +791,8 @@ export default function StudentsPage() {
   }, [])
 
   const openPromoteDialog = async () => {
-    const selectedIndices = Object.keys(rowSelection)
-    if (selectedIndices.length === 0) return
+    if (selectedCount === 0) return
+    const studentsToPromote = [...selectedStudents]
 
     // Only show years that start AFTER the current year (true "next" years)
     const futureYears = academicYears
@@ -661,8 +809,7 @@ export default function StudentsPage() {
     const classesData = await fetchClassesWithSections()
 
     // Get unique classes of selected students
-    const selectedStudents = selectedIndices.map(idx => students[parseInt(idx)]).filter(Boolean)
-    const uniqueClassIds = [...new Set(selectedStudents.map(s => s.class?.id).filter(Boolean))] as string[]
+    const uniqueClassIds = [...new Set(studentsToPromote.map(s => s.class?.id).filter(Boolean))] as string[]
 
     // Auto-suggest mappings: each class maps to the next class by sortOrder
     const initialMappings: Record<string, { toClassId: string; toSectionId: string }> = {}
@@ -683,7 +830,7 @@ export default function StudentsPage() {
     setPendingFeePreview(null)
     try {
       const previewRes = await api.post<any>('/students/promote/preview', {
-        studentIds: selectedStudents.map(s => s.id),
+        studentIds: studentsToPromote.map(s => s.id),
       })
       if (previewRes.success && previewRes.data) {
         setPendingFeePreview(previewRes.data)
@@ -697,11 +844,11 @@ export default function StudentsPage() {
 
   const handlePromote = async () => {
     if (!selectedYear?.id || !targetYearId) return
-    const selectedIndices = Object.keys(rowSelection)
-    const selectedStudents = selectedIndices.map(idx => students[parseInt(idx)]).filter(Boolean)
+    const studentsToPromote = [...selectedStudents]
+    if (studentsToPromote.length === 0) return
 
     // Validate all mappings are set
-    const uniqueClassIds = [...new Set(selectedStudents.map(s => s.class?.id).filter(Boolean))] as string[]
+    const uniqueClassIds = [...new Set(studentsToPromote.map(s => s.class?.id).filter(Boolean))] as string[]
     const missingMappings = uniqueClassIds.filter(cid => !classMappings[cid]?.toClassId)
     if (missingMappings.length > 0) {
       toast.error('Please select a target class for all classes')
@@ -711,7 +858,7 @@ export default function StudentsPage() {
     setPromoting(true)
     try {
       const res = await api.post<any>('/students/promote', {
-        studentIds: selectedStudents.map(s => s.id),
+        studentIds: studentsToPromote.map(s => s.id),
         fromYearId: selectedYear.id,
         toYearId: targetYearId,
         classMappings: uniqueClassIds.map(fromClassId => ({
@@ -898,10 +1045,7 @@ export default function StudentsPage() {
             <PermissionGate permission="students:create">
               <Button
                 variant="outline"
-                onClick={() => {
-                  resetImportState()
-                  setImportDialogOpen(true)
-                }}
+                onClick={handleOpenImportDialog}
               >
                 <Download className="mr-2 h-4 w-4" />Import Excel
               </Button>
@@ -954,6 +1098,7 @@ export default function StudentsPage() {
           <DataTable
             columns={columns}
             data={students}
+            getRowId={(student: Student) => student.id}
             onRowClick={(student: Student) => router.push(`/dashboard/students/${student.id}`)}
             isLoading={loading}
             rowCount={total}
@@ -965,9 +1110,9 @@ export default function StudentsPage() {
             rowSelection={rowSelection}
             onRowSelectionChange={setRowSelection}
             toolbar={
-              Object.keys(rowSelection).length > 0 && (
+              selectedCount > 0 && (
                 <div className="flex items-center gap-2 rounded-lg bg-muted p-2 animate-in fade-in slide-in-from-top-1">
-                  <span className="text-sm font-medium ml-2">{Object.keys(rowSelection).length} selected</span>
+                  <span className="text-sm font-medium ml-2">{selectedCount} selected</span>
                   <div className="ml-auto flex gap-2">
                     <Button variant="outline" size="sm" onClick={openPromoteDialog}><ArrowUpRight className="mr-1 h-4 w-4" />Promote</Button>
                     <Button variant="destructive" size="sm" onClick={handleBulkDelete}>Delete</Button>
@@ -999,10 +1144,14 @@ export default function StudentsPage() {
               type="file"
               accept=".xlsx,.xls"
               className="hidden"
+              disabled={!importReadiness.ready || checkingImportReadiness || previewingImport || importingStudents}
               onChange={(event) => {
                 const selected = event.target.files?.[0] || null
                 setImportFile(selected)
                 setImportPreview(null)
+                if (selected && importReadiness.ready && !checkingImportReadiness) {
+                  void previewImportFile(selected, false)
+                }
               }}
             />
 
@@ -1011,12 +1160,47 @@ export default function StudentsPage() {
               then upload it here to validate and import.
             </div>
 
+            {checkingImportReadiness ? (
+              <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Checking setup requirements: classes, sections, and current academic year...</span>
+                </div>
+              </div>
+            ) : importReadiness.ready ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 text-sm text-emerald-800">
+                Setup check passed. You can now download the template and import students.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-sm text-amber-900">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <p className="font-medium">Import is blocked until setup is complete.</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-5">
+                      {importReadiness.issues.map((issue, index) => (
+                        <li key={`import-issue-${index}`}>{issue}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" onClick={handleDownloadImportTemplate} disabled={downloadingTemplate}>
+              <Button
+                variant="outline"
+                onClick={handleDownloadImportTemplate}
+                disabled={downloadingTemplate || !importReadiness.ready || checkingImportReadiness}
+              >
                 <Download className="mr-2 h-4 w-4" />
                 {downloadingTemplate ? 'Downloading...' : 'Download Template'}
               </Button>
-              <Button variant="outline" onClick={() => importFileInputRef.current?.click()}>
+              <Button
+                variant="outline"
+                onClick={() => importFileInputRef.current?.click()}
+                disabled={!importReadiness.ready || checkingImportReadiness}
+              >
                 <Upload className="mr-2 h-4 w-4" />Choose Excel File
               </Button>
               <span className="text-sm text-muted-foreground truncate max-w-[320px]">
@@ -1025,10 +1209,17 @@ export default function StudentsPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={handlePreviewImport} disabled={!importFile || previewingImport || importingStudents}>
+              <Button
+                variant="outline"
+                onClick={handlePreviewImport}
+                disabled={!importReadiness.ready || checkingImportReadiness || !importFile || previewingImport || importingStudents}
+              >
                 {previewingImport ? 'Validating...' : 'Preview Import'}
               </Button>
-              <Button onClick={handleCommitImport} disabled={!importFile || importingStudents || previewingImport}>
+              <Button
+                onClick={handleCommitImport}
+                disabled={!importReadiness.ready || checkingImportReadiness || !importFile || importingStudents || previewingImport}
+              >
                 {importingStudents ? 'Importing...' : 'Import Valid Rows'}
               </Button>
             </div>
@@ -1496,7 +1687,7 @@ export default function StudentsPage() {
             {/* Summary */}
             <div className="rounded-lg border bg-muted/50 p-4">
               <p className="text-sm font-medium">
-                Promoting <span className="text-primary font-bold">{Object.keys(rowSelection).length}</span> student{Object.keys(rowSelection).length > 1 ? 's' : ''} from <span className="font-bold">{selectedYear?.name || '—'}</span>
+                Promoting <span className="text-primary font-bold">{selectedCount}</span> student{selectedCount > 1 ? 's' : ''} from <span className="font-bold">{selectedYear?.name || '—'}</span>
               </p>
             </div>
 
@@ -1548,9 +1739,8 @@ export default function StudentsPage() {
                 <p className="text-xs text-muted-foreground -mt-2">Choose which class each group of students will be promoted to.</p>
                 {Object.entries(classMappings).map(([fromClassId, mapping]) => {
                   const fromClass = allClassesWithSections.find(c => c.id === fromClassId)
-                  const selectedStudentCount = Object.keys(rowSelection)
-                    .map(idx => students[parseInt(idx)])
-                    .filter(s => s?.class?.id === fromClassId).length
+                  const selectedStudentCount = selectedStudents
+                    .filter(s => s.class?.id === fromClassId).length
                   const targetSections = getTargetSections(mapping.toClassId)
 
                   return (
@@ -1616,7 +1806,7 @@ export default function StudentsPage() {
                   <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                   <div>
                     <p className="font-semibold text-sm text-amber-800 dark:text-amber-300">
-                      {pendingFeePreview.studentsWithPendingCount} of {Object.keys(rowSelection).length} student{Object.keys(rowSelection).length > 1 ? 's' : ''} have pending fees
+                      {pendingFeePreview.studentsWithPendingCount} of {selectedCount} student{selectedCount > 1 ? 's' : ''} have pending fees
                     </p>
                     <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
                       Total outstanding: <span className="font-bold">{pendingFeePreview.totalPending.toLocaleString()} PKR</span>
@@ -1647,7 +1837,7 @@ export default function StudentsPage() {
               onClick={handlePromote}
               disabled={promoting || !targetYearId || Object.values(classMappings).some(m => !m.toClassId)}
             >
-              {promoting ? 'Promoting...' : `Promote ${Object.keys(rowSelection).length} Student${Object.keys(rowSelection).length > 1 ? 's' : ''}`}
+              {promoting ? 'Promoting...' : `Promote ${selectedCount} Student${selectedCount > 1 ? 's' : ''}`}
             </Button>
           </DialogFooter>
         </DialogContent>

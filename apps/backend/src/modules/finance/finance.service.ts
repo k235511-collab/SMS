@@ -1043,7 +1043,7 @@ export class FinanceService {
     }
 
     // Build student filter merging classId, sectionId and campusId
-    const studentFilter: any = {}
+    const studentFilter: any = { deletedAt: null }
     if (query.classId) studentFilter.classId = query.classId
     if (query.sectionId) studentFilter.sectionId = query.sectionId
     if (campusId) {
@@ -1052,7 +1052,7 @@ export class FinanceService {
         { classId: null }
       ]
     }
-    if (Object.keys(studentFilter).length > 0) where.student = studentFilter
+    where.student = studentFilter
 
     if (query.search) {
       where.OR = [

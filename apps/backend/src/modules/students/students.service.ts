@@ -2,15 +2,12 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  InternalServerErrorException,
   BadRequestException,
-  Logger,
 } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import { PaginatedResult } from '../../common/dto'
 import { CreateStudentDto, UpdateStudentDto, GetStudentsDto, StudentStatsDto, PromoteStudentsDto } from './dto'
-import { Gender, StudentStatus } from '@prisma/client'
-import { FinanceCronService } from '../finance/finance-cron.service'
+import { Gender, InvoiceStatus, StudentStatus } from '@prisma/client'
 import { TeacherScopeService } from '../teachers/teacher-scope.service'
 import * as XLSX from 'xlsx'
 import * as ExcelJS from 'exceljs'
@@ -94,11 +91,8 @@ const IMPORT_ALLOWED_STATUS = new Set<StudentStatus>([
 
 @Injectable()
 export class StudentsService {
-  private readonly logger = new Logger(StudentsService.name)
-
   constructor(
     private readonly prisma: PrismaService,
-    private readonly financeCronService: FinanceCronService,
     private readonly teacherScope: TeacherScopeService,
   ) { }
 
@@ -210,6 +204,49 @@ export class StudentsService {
       schoolId: metadataSchoolId,
       campusId: metadataCampusId,
       campusName: metadataCampusName || 'Unknown campus',
+    }
+  }
+
+  private async ensureImportPrerequisites(schoolId: string, campusId: string) {
+    const [currentYear, classes] = await Promise.all([
+      this.prisma.academicYear.findFirst({
+        where: { schoolId, isCurrent: true },
+        select: { id: true },
+      }),
+      this.prisma.class.findMany({
+        where: {
+          schoolId,
+          campusId,
+          deletedAt: null,
+        },
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          sections: {
+            where: { deletedAt: null },
+            select: { id: true },
+          },
+        },
+      }),
+    ])
+
+    if (!currentYear) {
+      throw new BadRequestException('No current academic year found. Create and set an academic year before importing students.')
+    }
+
+    if (classes.length === 0) {
+      throw new BadRequestException('No classes found in the selected campus. Create classes before importing students.')
+    }
+
+    const classesWithoutSections = classes
+      .filter((item) => item.sections.length === 0)
+      .map((item) => item.name)
+
+    if (classesWithoutSections.length > 0) {
+      throw new BadRequestException(
+        `Create at least one section for each class before importing students. Missing sections: ${classesWithoutSections.join(', ')}`,
+      )
     }
   }
 
@@ -490,6 +527,8 @@ export class StudentsService {
       throw new BadRequestException('Selected campus was not found for this school')
     }
 
+    await this.ensureImportPrerequisites(schoolId, campusId)
+
     const classes = await this.prisma.class.findMany({
       where: { schoolId, campusId, deletedAt: null },
       orderBy: { name: 'asc' },
@@ -656,6 +695,8 @@ export class StudentsService {
       throw new BadRequestException('Select a campus before importing students')
     }
 
+    await this.ensureImportPrerequisites(schoolId, campusId)
+
     const { preview } = await this.parseStudentImportWorkbook(schoolId, campusId, fileBuffer)
     return preview
   }
@@ -664,6 +705,8 @@ export class StudentsService {
     if (!campusId) {
       throw new BadRequestException('Select a campus before importing students')
     }
+
+    await this.ensureImportPrerequisites(schoolId, campusId)
 
     const { rows, preview } = await this.parseStudentImportWorkbook(schoolId, campusId, fileBuffer)
 
@@ -926,17 +969,6 @@ export class StudentsService {
 
       return student
     })
-
-    // Auto-generate initial invoices for the newly enrolled student
-    try {
-      await this.financeCronService.generateInvoicesForNewStudent(
-        result.id,
-        schoolId,
-        result.classId ?? undefined,
-      )
-    } catch (err) {
-      this.logger.warn(`Failed to auto-generate invoices for new student ${result.id}: ${err}`)
-    }
 
     return result
   }
@@ -1326,10 +1358,34 @@ export class StudentsService {
     requesterUserId?: string | null,
   ) {
     await this.findById(id, schoolId, campusId, teacherId, requesterUserId)
-    // Soft delete
-    return this.prisma.student.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    return this.prisma.$transaction(async (tx) => {
+      // Preserve payment history by cancelling partial invoices before student deletion.
+      await tx.invoice.updateMany({
+        where: {
+          schoolId,
+          studentId: id,
+          status: InvoiceStatus.PARTIAL,
+        },
+        data: {
+          status: InvoiceStatus.CANCELLED,
+        },
+      })
+
+      // Remove unpaid and overdue vouchers on delete.
+      await tx.invoice.deleteMany({
+        where: {
+          schoolId,
+          studentId: id,
+          status: {
+            in: [InvoiceStatus.UNPAID, InvoiceStatus.OVERDUE],
+          },
+        },
+      })
+
+      return tx.student.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      })
     })
   }
 

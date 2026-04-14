@@ -111,8 +111,7 @@ export class FinanceCronService {
 
   @Cron('0 2 1 * *') // 1st of every month at 2:00 AM
   async generateMonthlyInvoices() {
-    this.logger.log('Running monthly invoice generation...')
-    await this.generateRecurringInvoices('MONTHLY')
+    this.logger.log('Skipping monthly invoice generation (manual voucher mode is enabled).')
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -121,8 +120,7 @@ export class FinanceCronService {
 
   @Cron('0 30 2 1 1,4,7,10 *') // 1st of quarter months at 2:30 AM
   async generateQuarterlyInvoices() {
-    this.logger.log('Running quarterly invoice generation...')
-    await this.generateRecurringInvoices('QUARTERLY')
+    this.logger.log('Skipping quarterly invoice generation (manual voucher mode is enabled).')
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -131,8 +129,7 @@ export class FinanceCronService {
 
   @Cron('0 0 3 1 1,7 *') // 1st of Jan & Jul at 3:00 AM
   async generateSemiAnnualInvoices() {
-    this.logger.log('Running semi-annual invoice generation...')
-    await this.generateRecurringInvoices('SEMI_ANNUAL')
+    this.logger.log('Skipping semi-annual invoice generation (manual voucher mode is enabled).')
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -141,8 +138,7 @@ export class FinanceCronService {
 
   @Cron('0 30 3 1 1 *') // Jan 1st at 3:30 AM
   async generateAnnualInvoices() {
-    this.logger.log('Running annual invoice generation...')
-    await this.generateRecurringInvoices('ANNUAL')
+    this.logger.log('Skipping annual invoice generation (manual voucher mode is enabled).')
   }
 
   // ───────────────────────────────────────────────────────────────

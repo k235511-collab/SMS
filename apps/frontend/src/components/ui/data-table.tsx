@@ -66,6 +66,7 @@ export interface DataTableProps<TData, TValue> {
   enableRowSelection?: boolean
   rowSelection?: RowSelectionState
   onRowSelectionChange?: OnChangeFn<RowSelectionState>
+  getRowId?: TableOptions<TData>['getRowId']
 
   // ── UI ─────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,7 @@ export function DataTable<TData, TValue>({
   enableRowSelection = false,
   rowSelection: controlledRowSelection,
   onRowSelectionChange,
+  getRowId,
   showPagination = true,
   pinPaginationToBottom = false,
   pageSizeOptions = [10, 20, 30, 50, 100],
@@ -155,6 +157,7 @@ export function DataTable<TData, TValue>({
     // Row selection
     enableRowSelection,
     onRowSelectionChange: onRowSelectionChange ?? setInternalRowSelection,
+    ...(getRowId ? { getRowId } : {}),
     // Visibility
     onColumnVisibilityChange: setColumnVisibility,
     // Core
