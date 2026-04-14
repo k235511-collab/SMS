@@ -185,13 +185,7 @@ export class ExamsService {
     }
 
     if (query.academicYearId) {
-      if (!where.AND) where.AND = []
-      where.AND.push({
-        OR: [
-          { academicYearId: query.academicYearId },
-          { academicYearId: null },
-        ],
-      })
+      where.academicYearId = query.academicYearId
     }
 
     const [data, total] = await this.prisma.$transaction([
@@ -927,6 +921,7 @@ export class ExamsService {
   async getStudentResults(
     studentId: string,
     schoolId: string,
+    academicYearId?: string,
     startDate?: string,
     endDate?: string,
     teacherId?: string | null,
@@ -951,8 +946,9 @@ export class ExamsService {
 
     const where: any = { studentId, schoolId }
 
-    if (startDate || endDate) {
+    if (academicYearId || startDate || endDate) {
       where.exam = {}
+      if (academicYearId) where.exam.academicYearId = academicYearId
       if (startDate) where.exam.startDate = { gte: new Date(startDate) }
       if (endDate) where.exam.endDate = { lte: new Date(endDate) }
     }
@@ -970,12 +966,21 @@ export class ExamsService {
   async getStudentResultsSummary(
     studentId: string,
     schoolId: string,
+    academicYearId?: string,
     startDate?: string,
     endDate?: string,
     teacherId?: string | null,
     requesterUserId?: string | null,
   ) {
-    const results = await this.getStudentResults(studentId, schoolId, startDate, endDate, teacherId, requesterUserId)
+    const results = await this.getStudentResults(
+      studentId,
+      schoolId,
+      academicYearId,
+      startDate,
+      endDate,
+      teacherId,
+      requesterUserId,
+    )
 
     // Group results by exam
     const examGroups = results.reduce((acc, result) => {

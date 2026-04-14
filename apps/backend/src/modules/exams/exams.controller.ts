@@ -314,10 +314,19 @@ export class ExamsController {
     @TenantId() schoolId: string,
     @TeacherId() teacherId: string | null,
     @CurrentUser() user?: { userId?: string; id?: string; sub?: string } | null,
+    @Query('academicYearId') academicYearId?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.examsService.getStudentResults(studentId, schoolId, startDate, endDate, teacherId ?? null, user?.userId ?? user?.id ?? user?.sub ?? null)
+    return this.examsService.getStudentResults(
+      studentId,
+      schoolId,
+      academicYearId,
+      startDate,
+      endDate,
+      teacherId ?? null,
+      user?.userId ?? user?.id ?? user?.sub ?? null,
+    )
   }
 
   @Get('student-results/:studentId/summary')
@@ -329,10 +338,19 @@ export class ExamsController {
     @TenantId() schoolId: string,
     @TeacherId() teacherId: string | null,
     @CurrentUser() user?: { userId?: string; id?: string; sub?: string } | null,
+    @Query('academicYearId') academicYearId?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.examsService.getStudentResultsSummary(studentId, schoolId, startDate, endDate, teacherId ?? null, user?.userId ?? user?.id ?? user?.sub ?? null)
+    return this.examsService.getStudentResultsSummary(
+      studentId,
+      schoolId,
+      academicYearId,
+      startDate,
+      endDate,
+      teacherId ?? null,
+      user?.userId ?? user?.id ?? user?.sub ?? null,
+    )
   }
 
 

@@ -474,12 +474,16 @@ export default function ExamsPage() {
   }, [resultsSearch, resultsClassId, resultsSectionId, selectedYear?.id, isSessionLoading])
 
   const loadStudentAllExamResults = useCallback(async (studentId: string): Promise<StudentExamDetailRow[]> => {
-    const res = await api.get<StudentExamDetailRow[]>(`/exams/student-results/${studentId}`)
+    const res = await api.get<StudentExamDetailRow[]>(`/exams/student-results/${studentId}`, {
+      params: {
+        academicYearId: selectedYear?.id || undefined,
+      },
+    })
     if (res.success && res.data) {
       return Array.isArray(res.data) ? res.data : []
     }
     return []
-  }, [])
+  }, [selectedYear?.id])
 
   useEffect(() => {
     fetchExams()
