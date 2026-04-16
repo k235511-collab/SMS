@@ -547,7 +547,9 @@ export class FinanceService {
       }
     }
 
-    if (startDate || endDate) {
+    if (academicYearId) {
+      where.academicYearId = academicYearId
+    } else if (startDate || endDate) {
       where.dueDate = {}
       if (startDate) where.dueDate.gte = new Date(startDate)
       if (endDate) {
@@ -729,10 +731,51 @@ export class FinanceService {
   // MONTHLY FEE COLLECTION CHART
   // ═══════════════════════════════════════════════════════════════
 
-  async getMonthlyCollection(schoolId: string, startDate: string, endDate: string, campusId?: string) {
-    const start = new Date(startDate)
-    const end = new Date(endDate)
+  async getMonthlyCollection(schoolId: string, startDate: string, endDate: string, campusId?: string, academicYearId?: string) {
+    let start = new Date(startDate)
+    let end = new Date(endDate)
+
+    // If the incoming range is invalid, recover using the academic year range.
+    if (academicYearId && (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()))) {
+      const ay = await this.prisma.academicYear.findFirst({
+        where: { id: academicYearId, schoolId },
+        select: { startDate: true, endDate: true },
+      })
+      if (ay) {
+        start = new Date(ay.startDate)
+        end = new Date(ay.endDate)
+      }
+    }
+
+    // Hard fallback to avoid returning an empty chart on malformed ranges.
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+      const now = new Date()
+      start = new Date(now.getFullYear(), 0, 1)
+      end = new Date(now.getFullYear(), 11, 31)
+    }
+
+    if (start > end) {
+      const tmp = start
+      start = end
+      end = tmp
+    }
+
     end.setHours(23, 59, 59, 999)
+    const periodStart = new Date(start.getFullYear(), start.getMonth(), 1)
+    const periodEnd = new Date(end.getFullYear(), end.getMonth(), 1)
+
+    const getMonthKey = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`
+
+    const clampToPeriodMonth = (value: Date, fallback: Date) => {
+      if (!Number.isFinite(value.getTime())) {
+        return new Date(fallback)
+      }
+
+      const monthOnly = new Date(value.getFullYear(), value.getMonth(), 1)
+      if (monthOnly < periodStart) return new Date(periodStart)
+      if (monthOnly > periodEnd) return new Date(periodEnd)
+      return monthOnly
+    }
 
     const campusFilter = campusId ? {
       student: {
@@ -743,29 +786,42 @@ export class FinanceService {
       }
     } : {}
 
+    const invoiceWhere: any = {
+      schoolId,
+      ...campusFilter,
+    }
+
+    if (academicYearId) {
+      invoiceWhere.academicYearId = academicYearId
+    } else {
+      invoiceWhere.dueDate = { gte: start, lte: end }
+    }
+
+    const paymentWhere: any = {
+      schoolId,
+      deletedAt: null,
+      ...campusFilter,
+    }
+
+    if (academicYearId) {
+      paymentWhere.invoice = { academicYearId }
+    } else {
+      paymentWhere.paidAt = { gte: start, lte: end }
+    }
+
     // Get all invoices within the academic year
     const invoices = await this.prisma.invoice.findMany({
-      where: {
-        schoolId,
-        dueDate: { gte: start, lte: end },
-        ...campusFilter,
-      },
+      where: invoiceWhere,
       select: {
         totalAmount: true,
-        paidAmount: true,
         dueDate: true,
-        status: true,
+        createdAt: true,
       },
     })
 
     // Get all payments within the academic year
     const payments = await this.prisma.feePayment.findMany({
-      where: {
-        schoolId,
-        deletedAt: null,
-        paidAt: { gte: start, lte: end },
-        ...campusFilter,
-      },
+      where: paymentWhere,
       select: {
         amount: true,
         paidAt: true,
@@ -785,45 +841,53 @@ export class FinanceService {
     })
 
     // Build monthly buckets
-    const months: { month: string; receivable: number; collected: number; pending: number; expenses: number }[] = []
-    const cursor = new Date(start.getFullYear(), start.getMonth(), 1)
-    const endMonth = new Date(end.getFullYear(), end.getMonth(), 1)
+    const monthBuckets = new Map<string, { month: string; receivable: number; collected: number; expenses: number }>()
 
-    while (cursor <= endMonth) {
-      const y = cursor.getFullYear()
-      const m = cursor.getMonth()
-      const label = cursor.toLocaleString('en-US', { month: 'short', year: '2-digit' })
-
-      // Receivable = sum of totalAmount for invoices due in this month
-      const receivable = invoices
-        .filter(inv => {
-          const d = new Date(inv.dueDate)
-          return d.getFullYear() === y && d.getMonth() === m
-        })
-        .reduce((s, inv) => s + Number(inv.totalAmount), 0)
-
-      // Collected = sum of payments made in this month
-      const collected = payments
-        .filter(p => {
-          const d = new Date(p.paidAt)
-          return d.getFullYear() === y && d.getMonth() === m
-        })
-        .reduce((s, p) => s + Number(p.amount), 0)
-
-      // Expenses = sum of expense amounts in this month
-      const expenseTotal = expenses
-        .filter(e => {
-          const d = new Date(e.date)
-          return d.getFullYear() === y && d.getMonth() === m
-        })
-        .reduce((s, e) => s + Number(e.amount), 0)
-
-      months.push({ month: label, receivable, collected, pending: receivable - collected, expenses: expenseTotal })
-
+    const cursor = new Date(periodStart)
+    while (cursor <= periodEnd) {
+      const key = getMonthKey(cursor)
+      monthBuckets.set(key, {
+        month: cursor.toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+        receivable: 0,
+        collected: 0,
+        expenses: 0,
+      })
       cursor.setMonth(cursor.getMonth() + 1)
     }
 
-    return months
+    for (const inv of invoices) {
+      const dueDate = new Date(inv.dueDate)
+      const fallbackDate = new Date(inv.createdAt)
+      const sourceDate = Number.isFinite(dueDate.getTime()) ? dueDate : fallbackDate
+      const bucketDate = clampToPeriodMonth(sourceDate, periodStart)
+      const bucket = monthBuckets.get(getMonthKey(bucketDate))
+      if (bucket) {
+        bucket.receivable += Number(inv.totalAmount)
+      }
+    }
+
+    for (const payment of payments) {
+      const paidAt = new Date(payment.paidAt)
+      const bucketDate = clampToPeriodMonth(paidAt, periodStart)
+      const bucket = monthBuckets.get(getMonthKey(bucketDate))
+      if (bucket) {
+        bucket.collected += Number(payment.amount)
+      }
+    }
+
+    for (const expense of expenses) {
+      const expenseDate = new Date(expense.date)
+      const bucketDate = clampToPeriodMonth(expenseDate, periodStart)
+      const bucket = monthBuckets.get(getMonthKey(bucketDate))
+      if (bucket) {
+        bucket.expenses += Number(expense.amount)
+      }
+    }
+
+    return Array.from(monthBuckets.values()).map((bucket) => ({
+      ...bucket,
+      pending: bucket.receivable - bucket.collected,
+    }))
   }
 
   // ═══════════════════════════════════════════════════════════════

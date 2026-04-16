@@ -260,9 +260,10 @@ export class FinanceController {
     @TenantId() schoolId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('academicYearId') academicYearId?: string,
     @CampusId() campusId?: string,
   ) {
-    return this.financeService.getMonthlyCollection(schoolId, startDate, endDate, campusId)
+    return this.financeService.getMonthlyCollection(schoolId, startDate, endDate, campusId, academicYearId)
   }
 
   @Get('top-defaulters')

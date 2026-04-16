@@ -169,7 +169,11 @@ export default function FinancePage() {
   const fetchMonthlyCollection = useCallback(async () => {
     if (!selectedYear) return
     setChartLoading(true)
-    const params = { startDate: selectedYear.startDate, endDate: selectedYear.endDate }
+    const params = {
+      startDate: selectedYear.startDate,
+      endDate: selectedYear.endDate,
+      academicYearId: selectedYear.id,
+    }
     const res = await api.get<MonthlyData[]>('/finance/monthly-collection', { params })
     if (res.success && res.data) setMonthlyData(Array.isArray(res.data) ? res.data : [])
     setChartLoading(false)
