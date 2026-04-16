@@ -473,7 +473,19 @@ export default function ExamsPage() {
     }
   }, [resultsSearch, resultsClassId, resultsSectionId, selectedYear?.id, isSessionLoading])
 
+  const detailsCacheKey = useMemo(() => {
+    const yearKey = selectedYear?.id || 'no-year'
+    const campusKey = selectedCampus?.id || 'no-campus'
+    const classKey = resultsClassId || 'all-classes'
+    const sectionKey = resultsSectionId || 'all-sections'
+    return [yearKey, campusKey, classKey, sectionKey].join('::')
+  }, [selectedYear?.id, selectedCampus?.id, resultsClassId, resultsSectionId])
+
   const loadStudentAllExamResults = useCallback(async (studentId: string): Promise<StudentExamDetailRow[]> => {
+    if (!selectedYear?.id) {
+      return []
+    }
+
     const res = await api.get<StudentExamDetailRow[]>(`/exams/student-results/${studentId}`, {
       params: {
         academicYearId: selectedYear?.id || undefined,
@@ -808,6 +820,7 @@ export default function ExamsPage() {
               data={resultsRows}
               isLoading={resultsLoading}
               loadStudentDetails={loadStudentAllExamResults}
+              detailsCacheKey={detailsCacheKey}
             />
           </TabsContent>
         </Tabs>

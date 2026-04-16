@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -67,6 +67,7 @@ interface ExamStudentResultsTableProps {
   data: ExamStudentResultRow[]
   isLoading?: boolean
   loadStudentDetails: (studentId: string) => Promise<StudentExamDetailRow[]>
+  detailsCacheKey?: string
 }
 
 function DetailStatusBadge({ row }: { row: StudentExamDetailRow }) {
@@ -75,10 +76,23 @@ function DetailStatusBadge({ row }: { row: StudentExamDetailRow }) {
   return <Badge variant={row.isPassed ? 'success' : 'destructive'}>{row.isPassed ? 'Pass' : 'Fail'}</Badge>
 }
 
-export function ExamStudentResultsTable({ data, isLoading = false, loadStudentDetails }: ExamStudentResultsTableProps) {
+export function ExamStudentResultsTable({
+  data,
+  isLoading = false,
+  loadStudentDetails,
+  detailsCacheKey = 'default',
+}: ExamStudentResultsTableProps) {
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null)
   const [detailsByStudent, setDetailsByStudent] = useState<Record<string, StudentExamDetailRow[]>>({})
   const [loadingByStudent, setLoadingByStudent] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    setExpandedStudentId(null)
+    setDetailsByStudent({})
+    setLoadingByStudent({})
+  }, [detailsCacheKey])
+
+  const getScopedStudentKey = (studentId: string) => `${detailsCacheKey}::${studentId}`
 
   const groupedRows = useMemo(() => {
     const map = new Map<string, {
@@ -112,14 +126,15 @@ export function ExamStudentResultsTable({ data, isLoading = false, loadStudentDe
     }
 
     setExpandedStudentId(studentId)
-    if (detailsByStudent[studentId]) return
+    const scopedKey = getScopedStudentKey(studentId)
+    if (detailsByStudent[scopedKey]) return
 
-    setLoadingByStudent((prev) => ({ ...prev, [studentId]: true }))
+    setLoadingByStudent((prev) => ({ ...prev, [scopedKey]: true }))
     try {
       const details = await loadStudentDetails(studentId)
-      setDetailsByStudent((prev) => ({ ...prev, [studentId]: details }))
+      setDetailsByStudent((prev) => ({ ...prev, [scopedKey]: details }))
     } finally {
-      setLoadingByStudent((prev) => ({ ...prev, [studentId]: false }))
+      setLoadingByStudent((prev) => ({ ...prev, [scopedKey]: false }))
     }
   }
 
@@ -165,9 +180,10 @@ export function ExamStudentResultsTable({ data, isLoading = false, loadStudentDe
           <tbody className="[&_tr:last-child]:border-0">
             {groupedRows.map((item) => {
               const studentId = item.student.id
+              const scopedKey = getScopedStudentKey(studentId)
               const isExpanded = expandedStudentId === studentId
-              const details = detailsByStudent[studentId] || []
-              const isRowLoading = !!loadingByStudent[studentId]
+              const details = detailsByStudent[scopedKey] || []
+              const isRowLoading = !!loadingByStudent[scopedKey]
 
               return (
                 <Fragment key={studentId}>

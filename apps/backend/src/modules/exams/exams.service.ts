@@ -512,6 +512,12 @@ export class ExamsService {
     teacherId?: string | null,
     requesterUserId?: string | null,
   ): Promise<PaginatedResult<any>> {
+    const effectiveAcademicYearId = query.academicYearId
+      ?? (await this.prisma.academicYear.findFirst({
+        where: { schoolId, isCurrent: true },
+        select: { id: true },
+      }))?.id
+
     const effectiveTeacherId = await this.resolveEffectiveTeacherId(schoolId, teacherId, requesterUserId)
     const examWhere: any = { schoolId }
     if (campusId) examWhere.campusId = campusId
@@ -519,7 +525,7 @@ export class ExamsService {
     if (query.classId) examWhere.classId = query.classId
     if (query.subjectId) examWhere.subjectId = query.subjectId
     if (query.sectionId) examWhere.sectionId = query.sectionId
-    if (query.academicYearId) examWhere.academicYearId = query.academicYearId
+    if (effectiveAcademicYearId) examWhere.academicYearId = effectiveAcademicYearId
 
     const search = query.search?.trim()
 
@@ -535,7 +541,7 @@ export class ExamsService {
       const accessConditions = await this.teacherScope.getExamAccessConditions(
         effectiveTeacherId,
         schoolId,
-        query.academicYearId,
+        effectiveAcademicYearId,
       )
       if (accessConditions.length === 0) {
         return new PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20)
@@ -558,7 +564,7 @@ export class ExamsService {
 
     if (query.classId) enrollmentWhere.classId = query.classId
     if (query.sectionId) enrollmentWhere.sectionId = query.sectionId
-    if (query.academicYearId) enrollmentWhere.academicYearId = query.academicYearId
+    if (effectiveAcademicYearId) enrollmentWhere.academicYearId = effectiveAcademicYearId
 
     if (search) {
       enrollmentWhere.student.OR = [
@@ -944,11 +950,17 @@ export class ExamsService {
       })
     }
 
+    const effectiveAcademicYearId = academicYearId
+      ?? (await this.prisma.academicYear.findFirst({
+        where: { schoolId, isCurrent: true },
+        select: { id: true },
+      }))?.id
+
     const where: any = { studentId, schoolId }
 
-    if (academicYearId || startDate || endDate) {
+    if (effectiveAcademicYearId || startDate || endDate) {
       where.exam = {}
-      if (academicYearId) where.exam.academicYearId = academicYearId
+      if (effectiveAcademicYearId) where.exam.academicYearId = effectiveAcademicYearId
       if (startDate) where.exam.startDate = { gte: new Date(startDate) }
       if (endDate) where.exam.endDate = { lte: new Date(endDate) }
     }
