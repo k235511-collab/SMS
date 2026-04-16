@@ -156,12 +156,7 @@ export class FinanceService {
   async findAllInvoices(schoolId: string, query: GetInvoicesDto, campusId?: string): Promise<PaginatedResult<any>> {
     const where: any = { schoolId }
     if (campusId) {
-      where.student = {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
+      where.student = { campusId }
     }
 
     if (query.status) where.status = query.status
@@ -376,12 +371,7 @@ export class FinanceService {
   async findAllPayments(schoolId: string, query: PaginationDto & { startDate?: string; endDate?: string; method?: string }, campusId?: string): Promise<PaginatedResult<any>> {
     const where: any = { schoolId, deletedAt: null }
     if (campusId) {
-      where.student = {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
+      where.student = { campusId }
     }
 
     if (query.startDate || query.endDate) {
@@ -435,12 +425,7 @@ export class FinanceService {
   async findDeletedPayments(schoolId: string, query: PaginationDto & { startDate?: string; endDate?: string; method?: string }, campusId?: string): Promise<PaginatedResult<any>> {
     const where: any = { schoolId, deletedAt: { not: null } }
     if (campusId) {
-      where.student = {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
+      where.student = { campusId }
     }
 
     if (query.startDate || query.endDate) {
@@ -539,12 +524,7 @@ export class FinanceService {
   async getFinanceSummary(schoolId: string, startDate?: string, endDate?: string, campusId?: string, academicYearId?: string) {
     const where: any = { schoolId }
     if (campusId) {
-      where.student = {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
+      where.student = { campusId }
     }
 
     if (academicYearId) {
@@ -561,7 +541,7 @@ export class FinanceService {
 
     // Build campus filter reusable for sub-queries
     const campusFilter: any = campusId
-      ? { student: { OR: [{ class: { campusId } }, { classId: null }] } }
+      ? { student: { campusId } }
       : {}
 
     // ── Last Month Pending: invoices in current year whose dueDate falls in
@@ -673,12 +653,7 @@ export class FinanceService {
     const paymentWhere: any = { schoolId, paidAt: { gte: start, lte: end } }
     paymentWhere.deletedAt = null
     if (campusId) {
-      paymentWhere.student = {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
+      paymentWhere.student = { campusId }
     }
 
     // Get all payments within the range
@@ -777,14 +752,7 @@ export class FinanceService {
       return monthOnly
     }
 
-    const campusFilter = campusId ? {
-      student: {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
-    } : {}
+    const campusFilter = campusId ? { student: { campusId } } : {}
 
     const invoiceWhere: any = {
       schoolId,
@@ -902,14 +870,7 @@ export class FinanceService {
       select: { name: true, startDate: true, endDate: true },
     })
 
-    const campusFilter = campusId ? {
-      student: {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
-    } : {}
+    const campusFilter = campusId ? { student: { campusId } } : {}
 
     const years: { year: string; receivable: number; collected: number; pending: number; expenses: number }[] = []
 
@@ -958,14 +919,7 @@ export class FinanceService {
     const end = new Date(endDate)
     end.setHours(23, 59, 59, 999)
 
-    const campusFilter = campusId ? {
-      student: {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
-    } : {}
+    const campusFilter = campusId ? { student: { campusId } } : {}
 
     // Get unpaid/overdue/partial invoices grouped by student
     const invoices = await this.prisma.invoice.findMany({
@@ -1024,14 +978,7 @@ export class FinanceService {
     const end = new Date(endDate)
     end.setHours(23, 59, 59, 999)
 
-    const campusFilter = campusId ? {
-      student: {
-        OR: [
-          { class: { campusId } },
-          { classId: null }
-        ]
-      }
-    } : {}
+    const campusFilter = campusId ? { student: { campusId } } : {}
 
     // Get invoices that have discounts
     const invoices = await this.prisma.invoice.findMany({
@@ -1111,10 +1058,7 @@ export class FinanceService {
     if (query.classId) studentFilter.classId = query.classId
     if (query.sectionId) studentFilter.sectionId = query.sectionId
     if (campusId) {
-      studentFilter.OR = [
-        { class: { campusId } },
-        { classId: null }
-      ]
+      studentFilter.campusId = campusId
     }
     where.student = studentFilter
 
