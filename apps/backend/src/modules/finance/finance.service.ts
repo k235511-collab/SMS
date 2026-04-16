@@ -527,8 +527,25 @@ export class FinanceService {
       where.student = { campusId }
     }
 
+    const dueDateWindow: any = {}
+    if (startDate) dueDateWindow.gte = new Date(startDate)
+    if (endDate) {
+      const end = new Date(endDate)
+      end.setHours(23, 59, 59, 999)
+      dueDateWindow.lte = end
+    }
+
     if (academicYearId) {
-      where.academicYearId = academicYearId
+      // Be resilient to legacy records where academicYearId may be missing or stale
+      // but dueDate still falls inside the selected academic session window.
+      if (Object.keys(dueDateWindow).length > 0) {
+        where.OR = [
+          { academicYearId },
+          { dueDate: dueDateWindow },
+        ]
+      } else {
+        where.academicYearId = academicYearId
+      }
     } else if (startDate || endDate) {
       where.dueDate = {}
       if (startDate) where.dueDate.gte = new Date(startDate)
@@ -760,7 +777,12 @@ export class FinanceService {
     }
 
     if (academicYearId) {
-      invoiceWhere.academicYearId = academicYearId
+      // Be resilient to legacy records where academicYearId is inconsistent
+      // but dueDate is within the selected session range.
+      invoiceWhere.OR = [
+        { academicYearId },
+        { dueDate: { gte: start, lte: end } },
+      ]
     } else {
       invoiceWhere.dueDate = { gte: start, lte: end }
     }
@@ -772,7 +794,12 @@ export class FinanceService {
     }
 
     if (academicYearId) {
-      paymentWhere.invoice = { academicYearId }
+      paymentWhere.invoice = {
+        OR: [
+          { academicYearId },
+          { dueDate: { gte: start, lte: end } },
+        ],
+      }
     } else {
       paymentWhere.paidAt = { gte: start, lte: end }
     }
