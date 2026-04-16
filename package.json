@@ -15,8 +15,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "devDependencies": {
-    "turbo": "^2.3.0",
     "prettier": "^3.4.0",
+    "turbo": "^2.3.0",
     "typescript": "^5.6.0"
   },
   "engines": {
@@ -37,7 +37,8 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-scope": "^8.4.0",
-    "eslint-visitor-keys": "^4.2.1"
+    "eslint-visitor-keys": "^4.2.1",
+    "xlsx": "^0.18.5"
   },
   "repository": {
     "type": "git",
