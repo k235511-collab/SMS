@@ -119,7 +119,7 @@ export function ExamStudentResultsTable({
     return Array.from(map.values())
   }, [data])
 
-  const toggleExpand = async (studentId: string) => {
+  const toggleExpand = async (studentId: string, resultCount: number) => {
     if (expandedStudentId === studentId) {
       setExpandedStudentId(null)
       return
@@ -127,7 +127,13 @@ export function ExamStudentResultsTable({
 
     setExpandedStudentId(studentId)
     const scopedKey = getScopedStudentKey(studentId)
-    if (detailsByStudent[scopedKey]) return
+
+    // Keep details panel aligned with list summary: if list has zero records,
+    // do not fetch details and always show the empty-state panel.
+    if (resultCount === 0) {
+      setDetailsByStudent((prev) => ({ ...prev, [scopedKey]: [] }))
+      return
+    }
 
     setLoadingByStudent((prev) => ({ ...prev, [scopedKey]: true }))
     try {
@@ -202,7 +208,7 @@ export function ExamStudentResultsTable({
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                        onClick={() => toggleExpand(studentId)}
+                        onClick={() => toggleExpand(studentId, item.resultCount)}
                         aria-label={isExpanded ? 'Collapse student details' : 'Expand student details'}
                       >
                         {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}

@@ -928,6 +928,9 @@ export class ExamsService {
     studentId: string,
     schoolId: string,
     academicYearId?: string,
+    classId?: string,
+    sectionId?: string,
+    campusId?: string,
     startDate?: string,
     endDate?: string,
     teacherId?: string | null,
@@ -958,9 +961,12 @@ export class ExamsService {
 
     const where: any = { studentId, schoolId }
 
-    if (effectiveAcademicYearId || startDate || endDate) {
+    if (effectiveAcademicYearId || classId || sectionId || campusId || startDate || endDate) {
       where.exam = {}
       if (effectiveAcademicYearId) where.exam.academicYearId = effectiveAcademicYearId
+      if (classId) where.exam.classId = classId
+      if (sectionId) where.exam.sectionId = sectionId
+      if (campusId) where.exam.campusId = campusId
       if (startDate) where.exam.startDate = { gte: new Date(startDate) }
       if (endDate) where.exam.endDate = { lte: new Date(endDate) }
     }
@@ -988,6 +994,9 @@ export class ExamsService {
       studentId,
       schoolId,
       academicYearId,
+      undefined,
+      undefined,
+      undefined,
       startDate,
       endDate,
       teacherId,

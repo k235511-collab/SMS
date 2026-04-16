@@ -489,13 +489,15 @@ export default function ExamsPage() {
     const res = await api.get<StudentExamDetailRow[]>(`/exams/student-results/${studentId}`, {
       params: {
         academicYearId: selectedYear?.id || undefined,
+        classId: resultsClassId || undefined,
+        sectionId: resultsSectionId || undefined,
       },
     })
     if (res.success && res.data) {
       return Array.isArray(res.data) ? res.data : []
     }
     return []
-  }, [selectedYear?.id])
+  }, [selectedYear?.id, resultsClassId, resultsSectionId])
 
   useEffect(() => {
     fetchExams()

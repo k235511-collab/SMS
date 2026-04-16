@@ -312,9 +312,12 @@ export class ExamsController {
   getStudentResults(
     @Param('studentId') studentId: string,
     @TenantId() schoolId: string,
-    @TeacherId() teacherId: string | null,
+    @CampusId() campusId?: string,
+    @TeacherId() teacherId?: string | null,
     @CurrentUser() user?: { userId?: string; id?: string; sub?: string } | null,
     @Query('academicYearId') academicYearId?: string,
+    @Query('classId') classId?: string,
+    @Query('sectionId') sectionId?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
@@ -322,6 +325,9 @@ export class ExamsController {
       studentId,
       schoolId,
       academicYearId,
+      classId,
+      sectionId,
+      campusId,
       startDate,
       endDate,
       teacherId ?? null,
