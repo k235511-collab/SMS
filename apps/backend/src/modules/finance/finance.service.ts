@@ -21,6 +21,53 @@ import { calculateInvoiceDiscountFields, calculateInvoiceStatus } from './financ
 export class FinanceService {
   constructor(private readonly prisma: PrismaService) { }
 
+  private async resolveAcademicYearIdByRange(
+    schoolId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<string | undefined> {
+    if (!startDate && !endDate) return undefined
+
+    const parsedStart = startDate ? new Date(startDate) : null
+    const parsedEnd = endDate ? new Date(endDate) : null
+
+    if (parsedStart && !Number.isFinite(parsedStart.getTime())) return undefined
+    if (parsedEnd && !Number.isFinite(parsedEnd.getTime())) return undefined
+
+    const start = parsedStart ?? parsedEnd!
+    const end = parsedEnd ?? parsedStart!
+
+    const from = start <= end ? start : end
+    const to = start <= end ? end : start
+
+    const year = await this.prisma.academicYear.findFirst({
+      where: {
+        schoolId,
+        OR: [
+          // Input start date falls inside the year.
+          {
+            startDate: { lte: from },
+            endDate: { gte: from },
+          },
+          // Input end date falls inside the year.
+          {
+            startDate: { lte: to },
+            endDate: { gte: to },
+          },
+          // Year is fully contained inside input range.
+          {
+            startDate: { gte: from },
+            endDate: { lte: to },
+          },
+        ],
+      },
+      orderBy: { startDate: 'desc' },
+      select: { id: true },
+    })
+
+    return year?.id
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // FEE STRUCTURES
   // ═══════════════════════════════════════════════════════════════
@@ -376,8 +423,11 @@ export class FinanceService {
       where.student = { campusId }
     }
 
-    if (query.academicYearId) {
-      where.invoice = { academicYearId: query.academicYearId }
+    const resolvedAcademicYearId = query.academicYearId
+      ?? await this.resolveAcademicYearIdByRange(schoolId, query.startDate, query.endDate)
+
+    if (resolvedAcademicYearId) {
+      where.invoice = { academicYearId: resolvedAcademicYearId }
     } else if (query.startDate || query.endDate) {
       where.paidAt = {}
       if (query.startDate) where.paidAt.gte = new Date(query.startDate)
@@ -432,8 +482,11 @@ export class FinanceService {
       where.student = { campusId }
     }
 
-    if (query.academicYearId) {
-      where.invoice = { academicYearId: query.academicYearId }
+    const resolvedAcademicYearId = query.academicYearId
+      ?? await this.resolveAcademicYearIdByRange(schoolId, query.startDate, query.endDate)
+
+    if (resolvedAcademicYearId) {
+      where.invoice = { academicYearId: resolvedAcademicYearId }
     } else if (query.startDate || query.endDate) {
       where.paidAt = {}
       if (query.startDate) where.paidAt.gte = new Date(query.startDate)
@@ -533,6 +586,9 @@ export class FinanceService {
       where.student = { campusId }
     }
 
+    const effectiveAcademicYearId = academicYearId
+      ?? await this.resolveAcademicYearIdByRange(schoolId, startDate, endDate)
+
     const dueDateWindow: any = {}
     if (startDate) dueDateWindow.gte = new Date(startDate)
     if (endDate) {
@@ -541,16 +597,16 @@ export class FinanceService {
       dueDateWindow.lte = end
     }
 
-    if (academicYearId) {
+    if (effectiveAcademicYearId) {
       // Be resilient to legacy records where academicYearId may be missing or stale
       // but dueDate still falls inside the selected academic session window.
       if (Object.keys(dueDateWindow).length > 0) {
         where.OR = [
-          { academicYearId },
+          { academicYearId: effectiveAcademicYearId },
           { dueDate: dueDateWindow },
         ]
       } else {
-        where.academicYearId = academicYearId
+        where.academicYearId = effectiveAcademicYearId
       }
     } else if (startDate || endDate) {
       where.dueDate = {}
@@ -578,13 +634,13 @@ export class FinanceService {
       dueDate: { gte: lastMonthStart, lte: lastMonthEnd },
       ...campusFilter,
     }
-    if (academicYearId) lastMonthWhere.academicYearId = academicYearId
+    if (effectiveAcademicYearId) lastMonthWhere.academicYearId = effectiveAcademicYearId
 
     // ── Last Year Pending: all unpaid invoices from the previous academic year ──
     let lastYearWhere: any | null = null
-    if (academicYearId) {
+    if (effectiveAcademicYearId) {
       // Find previous academic year by start date
-      const currentAY = await this.prisma.academicYear.findUnique({ where: { id: academicYearId }, select: { startDate: true } })
+      const currentAY = await this.prisma.academicYear.findUnique({ where: { id: effectiveAcademicYearId }, select: { startDate: true } })
       if (currentAY) {
         const prevAY = await this.prisma.academicYear.findFirst({
           where: { schoolId, startDate: { lt: currentAY.startDate } },
@@ -733,10 +789,13 @@ export class FinanceService {
     let start = new Date(startDate)
     let end = new Date(endDate)
 
+    const effectiveAcademicYearId = academicYearId
+      ?? await this.resolveAcademicYearIdByRange(schoolId, startDate, endDate)
+
     // If the incoming range is invalid, recover using the academic year range.
-    if (academicYearId && (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()))) {
+    if (effectiveAcademicYearId && (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()))) {
       const ay = await this.prisma.academicYear.findFirst({
-        where: { id: academicYearId, schoolId },
+        where: { id: effectiveAcademicYearId, schoolId },
         select: { startDate: true, endDate: true },
       })
       if (ay) {
@@ -782,11 +841,11 @@ export class FinanceService {
       ...campusFilter,
     }
 
-    if (academicYearId) {
+    if (effectiveAcademicYearId) {
       // Be resilient to legacy records where academicYearId is inconsistent
       // but dueDate is within the selected session range.
       invoiceWhere.OR = [
-        { academicYearId },
+        { academicYearId: effectiveAcademicYearId },
         { dueDate: { gte: start, lte: end } },
       ]
     } else {
@@ -799,10 +858,10 @@ export class FinanceService {
       ...campusFilter,
     }
 
-    if (academicYearId) {
+    if (effectiveAcademicYearId) {
       paymentWhere.invoice = {
         OR: [
-          { academicYearId },
+          { academicYearId: effectiveAcademicYearId },
           { dueDate: { gte: start, lte: end } },
         ],
       }
