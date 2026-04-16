@@ -30,7 +30,8 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { SelectEmptyItem, SelectLoadingItem } from '@/components/ui/select-state-items'
 import { api } from '@/lib/api-client'
-import { Plus, X, Settings, RotateCcw, Trash2, Pencil, User, CalendarClock } from 'lucide-react'
+import { Plus, X, Settings, RotateCcw, Trash2, Pencil, User, CalendarClock, Printer } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { toast } from 'sonner'
 import { CampusBadge } from '@/components/campus-badge'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
@@ -86,7 +87,7 @@ interface TeacherAssignment {
 
 export default function TimetablePage() {
   const { user } = useAuth()
-  const { selectedCampus } = useSession()
+  const { selectedCampus, selectedYear } = useSession()
   const isTeacher = !!user?.teacherId
   
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -138,6 +139,8 @@ export default function TimetablePage() {
   // ── Computed ──────────────────────────────────────────────────────────────
   const selectedClassName = classes.find(c => c.id === selectedClassId)?.name
   const selectedSectionName = sections.find(s => s.id === selectedSectionId)?.name
+  const selectedTeacherName = allTeachers.find((t) => t.id === selectedTeacherId)
+  const printDate = new Date().toLocaleString()
 
   // Filtered classes for teachers
   const availableClasses = useMemo(() => {
@@ -564,6 +567,139 @@ export default function TimetablePage() {
 
   // ── Period Settings Panel (inline) ────────────────────────────────────────
   const [showPeriodSettings, setShowPeriodSettings] = useState(false)
+  const handlePrint = () => window.print()
+
+  const buildSlotSummary = (slot: TimetableSlot | undefined) => {
+    if (!slot) return ''
+    const parts = [
+      slot.subject?.name || '',
+      slot.teacher ? `${slot.teacher.firstName} ${slot.teacher.lastName}` : '',
+      slot.room ? `Room: ${slot.room}` : '',
+    ].filter(Boolean)
+    return parts.join(' | ')
+  }
+
+  const sanitizeSheetName = (name: string) => name.replace(/[\\/?*[\]:]/g, '_').slice(0, 31) || 'Timetable'
+
+  const handleExportExcel = () => {
+    const workbook = XLSX.utils.book_new()
+    const data: (string | number)[][] = []
+
+    const contextLine = [
+      `Campus: ${selectedCampus?.name || 'All'}`,
+      `Academic Year: ${selectedYear?.name || 'N/A'}`,
+      `Printed At: ${printDate}`,
+    ].join(' | ')
+
+    data.push(['Timetable Export'])
+    data.push([contextLine])
+    data.push([`View: ${viewMode === 'class' ? 'Class' : viewMode === 'teacher' ? 'Weekly Teacher' : 'Today'}`])
+    data.push([])
+
+    if (viewMode === 'class') {
+      if (!selectedSectionId) {
+        toast.error('Please select class and section before exporting')
+        return
+      }
+
+      data.push(['Class', selectedClassName || '-'])
+      data.push(['Section', selectedSectionName || '-'])
+      data.push([])
+      data.push(['Time', ...WEEK_DAYS.map((day) => day.full)])
+
+      for (const period of periods) {
+        if (period.isBreak) {
+          data.push([`${period.label} (${period.startTime}-${period.endTime})`, 'BREAK', '', '', '', '', ''])
+          continue
+        }
+
+        const row: (string | number)[] = [`${period.label} (${period.startTime}-${period.endTime})`]
+        for (const day of WEEK_DAYS) {
+          const key = `${day.index}-${period.startTime}-${period.endTime}`
+          row.push(buildSlotSummary(slotLookup[key]))
+        }
+        data.push(row)
+      }
+    } else if (viewMode === 'teacher') {
+      if (!selectedTeacherId) {
+        toast.error('Please select a teacher before exporting')
+        return
+      }
+
+      const teacherName = selectedTeacherName
+        ? `${selectedTeacherName.firstName} ${selectedTeacherName.lastName}`
+        : 'Unknown Teacher'
+
+      data.push(['Teacher', teacherName])
+      data.push([])
+      data.push(['Time', ...WEEK_DAYS.map((day) => day.full)])
+
+      for (const period of periods) {
+        if (period.isBreak) {
+          data.push([`${period.label} (${period.startTime}-${period.endTime})`, 'BREAK', '', '', '', '', ''])
+          continue
+        }
+
+        const row: (string | number)[] = [`${period.label} (${period.startTime}-${period.endTime})`]
+        for (const day of WEEK_DAYS) {
+          const key = `${day.index}-${period.startTime}-${period.endTime}`
+          const slot = teacherSlotLookup[key]
+          if (!slot) {
+            row.push('')
+            continue
+          }
+
+          const extraClassInfo = slot.section?.class?.name && slot.section?.name
+            ? `${slot.section.class.name} - ${slot.section.name}`
+            : ''
+
+          row.push([buildSlotSummary(slot), extraClassInfo].filter(Boolean).join(' | '))
+        }
+        data.push(row)
+      }
+    } else {
+      data.push(['Day', ALL_DAYS[new Date().getDay()]])
+      data.push([])
+      data.push(['Time', 'Subject', 'Teacher', 'Class', 'Section', 'Room'])
+
+      for (const slot of todaySlots) {
+        data.push([
+          `${slot.startTime}-${slot.endTime}`,
+          slot.subject?.name || '',
+          slot.teacher ? `${slot.teacher.firstName} ${slot.teacher.lastName}` : '',
+          slot.section?.class?.name || '',
+          slot.section?.name || '',
+          slot.room || '',
+        ])
+      }
+
+      if (todaySlots.length === 0) {
+        data.push(['No classes scheduled for today'])
+      }
+    }
+
+    const worksheet = XLSX.utils.aoa_to_sheet(data)
+    worksheet['!cols'] = [
+      { wch: 28 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 24 },
+    ]
+
+    const fileBase =
+      viewMode === 'class'
+        ? `timetable-${selectedClassName || 'class'}-${selectedSectionName || 'section'}`
+        : viewMode === 'teacher'
+          ? `timetable-teacher-${selectedTeacherName?.firstName || 'unknown'}`
+          : 'timetable-today'
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeSheetName('Timetable'))
+    XLSX.writeFile(workbook, `${fileBase}.xlsx`)
+    toast.success('Timetable exported to Excel')
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -601,7 +737,7 @@ export default function TimetablePage() {
                 <PermissionGate permission="academics:delete">
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteSlot(slot.id) }}
-                    className={`rounded text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive transition-colors ${isMobile ? 'p-1.5 bg-card/50 backdrop-blur-sm active:scale-[0.90]' : 'p-0.5 invisible group-hover/slot:visible'}`}
+                    className={`no-print rounded text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive transition-colors ${isMobile ? 'p-1.5 bg-card/50 backdrop-blur-sm active:scale-[0.90]' : 'p-0.5 invisible group-hover/slot:visible'}`}
                     title="Delete slot"
                   >
                     <X className={isMobile ? "h-4 w-4" : "h-3 w-3"} />
@@ -620,7 +756,7 @@ export default function TimetablePage() {
         <PermissionGate permission="academics:create">
           <button
             onClick={() => openAddDialog(dayIndex, period.startTime, period.endTime)}
-            className={`flex w-full items-center justify-center rounded-lg border border-dashed text-muted-foreground/40 transition-all hover:border-primary/50 hover:bg-primary/5 hover:text-primary active:scale-[0.98] ${isMobile ? 'min-h-[56px] border-border bg-muted/20' : 'h-full min-h-[3.5rem] border-transparent'}`}
+            className={`no-print flex w-full items-center justify-center rounded-lg border border-dashed text-muted-foreground/40 transition-all hover:border-primary/50 hover:bg-primary/5 hover:text-primary active:scale-[0.98] ${isMobile ? 'min-h-[56px] border-border bg-muted/20' : 'h-full min-h-[3.5rem] border-transparent'}`}
           >
             <Plus className={isMobile ? "h-5 w-5" : "h-4 w-4"} />
             {isMobile && <span className="ml-2 text-sm font-medium">Add Class</span>}
@@ -638,7 +774,7 @@ export default function TimetablePage() {
   }
 
   const renderDesktopGrid = (lookup: Record<string, TimetableSlot>) => (
-    <div className="hidden sm:block overflow-x-auto rounded-xl border border-border bg-card shadow-sm">
+    <div className="hidden sm:block print:block overflow-x-auto print:overflow-visible rounded-xl print:rounded-none border border-border print:border-0 bg-card print:bg-transparent shadow-sm print:shadow-none">
       <table className="w-full border-collapse">
         <thead>
           <tr>
@@ -690,7 +826,7 @@ export default function TimetablePage() {
   )
 
   const renderMobileGrid = (lookup: Record<string, TimetableSlot>) => (
-    <div className="sm:hidden space-y-5 -mx-4 px-4 pb-8">
+    <div className="sm:hidden print:hidden space-y-5 -mx-4 px-4 pb-8">
       <div className="flex space-x-2 overflow-x-auto pb-3 scrollbar-hide pt-1">
         {WEEK_DAYS.map(day => (
           <button
@@ -853,9 +989,9 @@ export default function TimetablePage() {
 
   return (
     <ProtectedRoute permission="timetable:read">
-      <div className="space-y-6">
+      <div className="print-target space-y-6 print:space-y-3">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between no-print">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Timetable</h1>
             <p className="mt-1 text-sm text-muted-foreground">View and manage class timetables</p>
@@ -894,12 +1030,36 @@ export default function TimetablePage() {
                 Periods
               </Button>
             </PermissionGate>
+            <Button variant="outline" size="sm" onClick={handlePrint}>
+              <Printer className="mr-1.5 h-3.5 w-3.5" />
+              Print
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportExcel}>
+              Export Excel
+            </Button>
           </div>
+        </div>
+
+        <div className="hidden print:block border-b pb-3">
+          <h1 className="text-xl font-bold">Timetable</h1>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Campus: {selectedCampus?.name || 'All'} | Academic Year: {selectedYear?.name || 'N/A'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            View: {viewMode === 'class' ? 'Class' : viewMode === 'teacher' ? 'Weekly Teacher' : 'Today'}
+            {viewMode === 'class' && selectedClassName && selectedSectionName
+              ? ` | ${selectedClassName} - Section ${selectedSectionName}`
+              : ''}
+            {viewMode === 'teacher' && selectedTeacherName
+              ? ` | ${selectedTeacherName.firstName} ${selectedTeacherName.lastName}`
+              : ''}
+          </p>
+          <p className="text-xs text-muted-foreground">Printed: {printDate}</p>
         </div>
 
         {/* Period Settings Panel */}
         {showPeriodSettings && (
-          <Card>
+          <Card className="no-print">
             <CardBody className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-foreground">Period Configuration</h3>
@@ -997,7 +1157,7 @@ export default function TimetablePage() {
             </div>
 
             {!selectedSectionId ? (
-              <Card>
+          <Card className="no-print">
                 <CardBody className="py-16 text-center">
                   <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                     <CalendarClock className="h-6 w-6 text-muted-foreground" />
@@ -1016,7 +1176,7 @@ export default function TimetablePage() {
         {viewMode === 'teacher' && (
           <>
             {!isTeacher && (
-              <div className="flex flex-wrap items-end gap-4 mb-6">
+              <div className="no-print flex flex-wrap items-end gap-4 mb-6">
                 <div className="w-full sm:w-64">
                   <Label className="mb-2">Teacher</Label>
                   <Select value={selectedTeacherId} onValueChange={setSelectedTeacherId} disabled={referencesLoading}>
@@ -1204,6 +1364,38 @@ export default function TimetablePage() {
         onConfirm={confirmDialog.handleConfirm}
         confirmLabel="Delete"
       />
+
+      <style jsx global>{`
+        @media print {
+          aside,
+          header {
+            display: none !important;
+          }
+
+          main > * {
+            display: none !important;
+          }
+
+          .print-target {
+            display: block !important;
+            width: 100% !important;
+          }
+
+          .no-print {
+            display: none !important;
+          }
+
+          html,
+          body {
+            background: #fff !important;
+          }
+
+          @page {
+            size: A4 landscape;
+            margin: 10mm;
+          }
+        }
+      `}</style>
     </ProtectedRoute>
   )
 }
