@@ -539,17 +539,20 @@ export class FinanceCronService {
       throw new Error('Fee structure not found')
     }
 
-    // Get academic year
-    let yearId = opts.academicYearId
-    if (!yearId) {
-      const currentYear = await this.prisma.academicYear.findFirst({
-        where: { schoolId, isCurrent: true },
-        select: { id: true },
+    // Get target academic year context
+    const targetYear = opts.academicYearId
+      ? await this.prisma.academicYear.findFirst({
+        where: { id: opts.academicYearId, schoolId },
+        select: { id: true, startDate: true, endDate: true },
       })
-      yearId = currentYear?.id
-    }
+      : await this.prisma.academicYear.findFirst({
+        where: { schoolId, isCurrent: true },
+        select: { id: true, startDate: true, endDate: true },
+      })
 
-    if (!yearId) {
+    const yearId = targetYear?.id
+
+    if (!yearId || !targetYear) {
       throw new Error('No current academic year found')
     }
 
@@ -599,11 +602,31 @@ export class FinanceCronService {
     // Calculate due date
     const now = new Date()
     const dueDay = feeStructure.dueDay || 15
+    const yearStart = new Date(targetYear.startDate)
+    const yearEnd = new Date(targetYear.endDate)
+    yearStart.setHours(0, 0, 0, 0)
+    yearEnd.setHours(23, 59, 59, 999)
+
+    const monthAnchor = now < yearStart ? yearStart : now > yearEnd ? yearEnd : now
+
     const dueDate = opts.dueDate
       ? new Date(opts.dueDate)
-      : new Date(now.getFullYear(), now.getMonth(), Math.min(dueDay, 28))
-    if (!opts.dueDate && dueDate < now) {
+      : new Date(monthAnchor.getFullYear(), monthAnchor.getMonth(), Math.min(dueDay, 28))
+
+    if (!Number.isFinite(dueDate.getTime())) {
+      throw new Error('Invalid due date')
+    }
+
+    if (!opts.dueDate && now >= yearStart && now <= yearEnd && dueDate < now) {
       dueDate.setMonth(dueDate.getMonth() + 1)
+    }
+
+    if (!opts.dueDate && dueDate < yearStart) {
+      dueDate.setTime(new Date(yearStart.getFullYear(), yearStart.getMonth(), Math.min(dueDay, 28)).getTime())
+    }
+
+    if (!opts.dueDate && dueDate > yearEnd) {
+      dueDate.setTime(new Date(yearEnd.getFullYear(), yearEnd.getMonth(), Math.min(dueDay, 28)).getTime())
     }
 
     // Check existing invoices by academic year

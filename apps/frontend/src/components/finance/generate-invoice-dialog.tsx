@@ -14,6 +14,7 @@ import { useSession } from '@/context/session-context'
 import { InvoicePreviewList } from './invoice-preview-list'
 import { InvoiceSummaryCard } from './invoice-summary-card'
 import type { PreviewStudent } from './invoice-preview-row'
+import type { AcademicYear } from '@/lib/types'
 
 interface FeeStructure {
   id: string
@@ -37,16 +38,37 @@ interface GenerateInvoiceDialogProps {
   onSuccess: () => void
 }
 
+function getDefaultDueDate(selectedYear?: Pick<AcademicYear, 'startDate' | 'endDate'> | null): string {
+  const today = new Date()
+  let candidate = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+
+  if (selectedYear) {
+    const yearStart = new Date(selectedYear.startDate)
+    const yearEnd = new Date(selectedYear.endDate)
+
+    if (Number.isFinite(yearStart.getTime()) && Number.isFinite(yearEnd.getTime())) {
+      yearStart.setHours(0, 0, 0, 0)
+      yearEnd.setHours(23, 59, 59, 999)
+
+      if (candidate < yearStart) candidate = new Date(yearStart)
+      if (candidate > yearEnd) candidate = new Date(yearEnd)
+    }
+  }
+
+  return candidate.toISOString().slice(0, 10)
+}
+
 export function GenerateInvoiceDialog({ open, onOpenChange, fees, classes, onSuccess }: GenerateInvoiceDialogProps) {
   const { selectedYear, selectedCampus } = useSession()
+  const defaultDueDate = useMemo(
+    () => getDefaultDueDate(selectedYear),
+    [selectedYear],
+  )
 
   // Form state
   const [feeStructureId, setFeeStructureId] = useState('')
   const [classId, setClassId] = useState('all')
-  const [dueDate, setDueDate] = useState(() => {
-    const d = new Date()
-    return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10)
-  })
+  const [dueDate, setDueDate] = useState(() => defaultDueDate)
   const [applyDiscounts, setApplyDiscounts] = useState(true)
 
   // Preview state
@@ -61,14 +83,18 @@ export function GenerateInvoiceDialog({ open, onOpenChange, fees, classes, onSuc
     if (!open) {
       setFeeStructureId('')
       setClassId('all')
-      const d = new Date()
-      setDueDate(new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10))
+      setDueDate(defaultDueDate)
       setApplyDiscounts(true)
       setPreviewStudents([])
       setSelectedStudentIds(new Set())
       setStudentQuery('')
     }
-  }, [open])
+  }, [open, defaultDueDate])
+
+  useEffect(() => {
+    if (!open) return
+    setDueDate(defaultDueDate)
+  }, [open, defaultDueDate])
 
   // Auto-lock class when fee structure is class-specific
   const selectedFee = fees.find(f => f.id === feeStructureId)
@@ -268,7 +294,7 @@ export function GenerateInvoiceDialog({ open, onOpenChange, fees, classes, onSuc
             <div className="grid gap-2">
               <Label>Due Date</Label>
               <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-              <p className="text-xs text-muted-foreground">Defaults to last day of current month</p>
+              <p className="text-xs text-muted-foreground">Defaults inside selected academic year</p>
             </div>
 
             <div className="flex items-center gap-2 pt-1">
