@@ -5,6 +5,8 @@ export {
   UpdateInvoiceDto,
   RecordPaymentDto,
   GetInvoicesDto,
+  GetPaymentsDto,
+  GetPendingFeesDto,
   BatchGenerateInvoicesDto,
   PreviewInvoicesQueryDto,
   CreateExpenseCategoryDto,

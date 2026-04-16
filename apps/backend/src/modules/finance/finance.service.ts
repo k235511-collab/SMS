@@ -8,6 +8,8 @@ import {
   UpdateInvoiceDto,
   RecordPaymentDto,
   GetInvoicesDto,
+  GetPaymentsDto,
+  GetPendingFeesDto,
   CreateExpenseCategoryDto,
   UpdateExpenseCategoryDto,
   CreateExpenseDto,
@@ -368,13 +370,15 @@ export class FinanceService {
     })
   }
 
-  async findAllPayments(schoolId: string, query: PaginationDto & { startDate?: string; endDate?: string; method?: string }, campusId?: string): Promise<PaginatedResult<any>> {
+  async findAllPayments(schoolId: string, query: GetPaymentsDto, campusId?: string): Promise<PaginatedResult<any>> {
     const where: any = { schoolId, deletedAt: null }
     if (campusId) {
       where.student = { campusId }
     }
 
-    if (query.startDate || query.endDate) {
+    if (query.academicYearId) {
+      where.invoice = { academicYearId: query.academicYearId }
+    } else if (query.startDate || query.endDate) {
       where.paidAt = {}
       if (query.startDate) where.paidAt.gte = new Date(query.startDate)
       if (query.endDate) {
@@ -422,13 +426,15 @@ export class FinanceService {
     return new PaginatedResult(data, total, query.page ?? 1, query.pageSize ?? 20)
   }
 
-  async findDeletedPayments(schoolId: string, query: PaginationDto & { startDate?: string; endDate?: string; method?: string }, campusId?: string): Promise<PaginatedResult<any>> {
+  async findDeletedPayments(schoolId: string, query: GetPaymentsDto, campusId?: string): Promise<PaginatedResult<any>> {
     const where: any = { schoolId, deletedAt: { not: null } }
     if (campusId) {
       where.student = { campusId }
     }
 
-    if (query.startDate || query.endDate) {
+    if (query.academicYearId) {
+      where.invoice = { academicYearId: query.academicYearId }
+    } else if (query.startDate || query.endDate) {
       where.paidAt = {}
       if (query.startDate) where.paidAt.gte = new Date(query.startDate)
       if (query.endDate) {
@@ -1061,7 +1067,7 @@ export class FinanceService {
   // PENDING FEES (students with unpaid/overdue/partial invoices)
   // ═══════════════════════════════════════════════════════════════
 
-  async getPendingFees(schoolId: string, query: PaginationDto & { startDate?: string; endDate?: string; classId?: string; sectionId?: string; status?: string; academicYearId?: string }, campusId?: string): Promise<PaginatedResult<any>> {
+  async getPendingFees(schoolId: string, query: GetPendingFeesDto, campusId?: string): Promise<PaginatedResult<any>> {
     const where: any = {
       schoolId,
       status: query.status

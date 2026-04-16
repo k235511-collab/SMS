@@ -21,6 +21,8 @@ import {
   UpdateInvoiceDto,
   RecordPaymentDto,
   GetInvoicesDto,
+  GetPaymentsDto,
+  GetPendingFeesDto,
   BatchGenerateInvoicesDto,
   PreviewInvoicesQueryDto,
   CreateExpenseCategoryDto,
@@ -158,7 +160,7 @@ export class FinanceController {
   @RequirePermission(Permission.READ_FINANCE)
   @ApiOperation({ summary: 'List all payments for school' })
   @ApiResponse({ status: 200, description: 'Paginated payments' })
-  findAllPayments(@TenantId() schoolId: string, @Query() query: PaginationDto & { startDate?: string; endDate?: string; method?: string }, @CampusId() campusId?: string) {
+  findAllPayments(@TenantId() schoolId: string, @Query() query: GetPaymentsDto, @CampusId() campusId?: string) {
     return this.financeService.findAllPayments(schoolId, query, campusId)
   }
 
@@ -166,7 +168,7 @@ export class FinanceController {
   @RequirePermission(Permission.READ_FINANCE)
   @ApiOperation({ summary: 'List soft-deleted payments (trash)' })
   @ApiResponse({ status: 200, description: 'Paginated deleted payments' })
-  findDeletedPayments(@TenantId() schoolId: string, @Query() query: PaginationDto & { startDate?: string; endDate?: string; method?: string }, @CampusId() campusId?: string) {
+  findDeletedPayments(@TenantId() schoolId: string, @Query() query: GetPaymentsDto, @CampusId() campusId?: string) {
     return this.financeService.findDeletedPayments(schoolId, query, campusId)
   }
 
@@ -300,7 +302,7 @@ export class FinanceController {
   @ApiResponse({ status: 200, description: 'Paginated pending fees' })
   getPendingFees(
     @TenantId() schoolId: string,
-    @Query() query: PaginationDto & { startDate?: string; endDate?: string; classId?: string; sectionId?: string; status?: string; academicYearId?: string },
+    @Query() query: GetPendingFeesDto,
     @CampusId() campusId?: string,
   ) {
     return this.financeService.getPendingFees(schoolId, query, campusId)

@@ -147,6 +147,40 @@ export class GetInvoicesDto extends PaginationDto {
   studentId?: string
 }
 
+export class GetPaymentsDto extends PaginationDto {
+  @ApiPropertyOptional({ enum: PaymentMethod })
+  @IsOptional()
+  @IsString()
+  method?: string
+
+  @ApiPropertyOptional({ description: 'Academic year ID used to scope payments by their invoice context' })
+  @IsOptional()
+  @IsString()
+  academicYearId?: string
+}
+
+export class GetPendingFeesDto extends PaginationDto {
+  @ApiPropertyOptional({ description: 'Class ID filter' })
+  @IsOptional()
+  @IsString()
+  classId?: string
+
+  @ApiPropertyOptional({ description: 'Section ID filter' })
+  @IsOptional()
+  @IsString()
+  sectionId?: string
+
+  @ApiPropertyOptional({ description: 'Invoice status filter' })
+  @IsOptional()
+  @IsString()
+  status?: string
+
+  @ApiPropertyOptional({ description: 'Academic year ID filter' })
+  @IsOptional()
+  @IsString()
+  academicYearId?: string
+}
+
 // ─── Payment DTOs ────────────────────────────────────────────────
 
 export class RecordPaymentDto {

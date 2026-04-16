@@ -249,6 +249,7 @@ export default function FinancePage() {
     const params: any = {
       page: payPage,
       pageSize: 20,
+      academicYearId: selectedYear.id,
       startDate: selectedYear.startDate,
       endDate: selectedYear.endDate,
       search: paySearch || undefined,
