@@ -158,13 +158,84 @@ export default function FinancePage() {
 
   /* ─── Fetchers ─────────────────────────────────────────────── */
 
+  const buildMonthlyFallbackData = useCallback((totalInvoiced: number, totalCollected: number): MonthlyData[] => {
+    if (!selectedYear) return []
+
+    const parsedStart = new Date(selectedYear.startDate)
+    const parsedEnd = new Date(selectedYear.endDate)
+
+    if (!Number.isFinite(parsedStart.getTime()) || !Number.isFinite(parsedEnd.getTime())) return []
+
+    const from = parsedStart <= parsedEnd ? parsedStart : parsedEnd
+    const to = parsedStart <= parsedEnd ? parsedEnd : parsedStart
+    const cursor = new Date(from.getFullYear(), from.getMonth(), 1)
+    const endMonth = new Date(to.getFullYear(), to.getMonth(), 1)
+
+    const rows: MonthlyData[] = []
+    let index = 0
+
+    while (cursor <= endMonth) {
+      const month = cursor.toLocaleString('en-US', { month: 'short', year: '2-digit' })
+      if (index === 0) {
+        const pending = Math.max(totalInvoiced - totalCollected, 0)
+        rows.push({ month, receivable: totalInvoiced, collected: totalCollected, pending, expenses: 0 })
+      } else {
+        rows.push({ month, receivable: 0, collected: 0, pending: 0, expenses: 0 })
+      }
+      cursor.setMonth(cursor.getMonth() + 1)
+      index += 1
+    }
+
+    return rows
+  }, [selectedYear])
+
+  const fetchAnalyticsFallback = useCallback(async () => {
+    if (!selectedYear) return null
+
+    const params: Record<string, string> = {
+      startDate: selectedYear.startDate,
+      endDate: selectedYear.endDate,
+      academicYearId: selectedYear.id,
+    }
+
+    const res = await api.get<any>('/analytics/overview', { params })
+    if (!res.success || !res.data?.feeCollection) return null
+
+    const collected = Number(res.data.feeCollection.yearly ?? 0)
+    const pending = Number(res.data.feeCollection.pendingFee ?? 0)
+    const receivable = collected + pending
+
+    if (collected === 0 && pending === 0 && receivable === 0) return null
+
+    return { collected, pending, receivable }
+  }, [selectedYear, selectedCampus])
+
   const fetchSummary = useCallback(async () => {
     if (!selectedYear) return
     const params: Record<string, string> = { startDate: selectedYear.startDate, endDate: selectedYear.endDate, academicYearId: selectedYear.id }
     const res = await api.get<FinanceSummary>('/finance/summary', { params })
-    if (res.success && res.data) setSummary(res.data)
-    else console.warn('[Finance] fetchSummary failed:', res.message, res.statusCode)
-  }, [selectedYear, selectedCampus])
+    if (res.success && res.data) {
+      setSummary(res.data)
+
+      const totalRevenue = Number(res.data.totalRevenue ?? 0)
+      const totalInvoiced = Number(res.data.totalInvoiced ?? 0)
+      const pendingAmount = Number(res.data.pendingAmount ?? 0)
+
+      if (totalRevenue === 0 && totalInvoiced === 0 && pendingAmount === 0) {
+        const fallback = await fetchAnalyticsFallback()
+        if (fallback) {
+          setSummary((prev) => ({
+            ...(prev ?? res.data),
+            totalRevenue: fallback.collected,
+            totalInvoiced: fallback.receivable,
+            pendingAmount: fallback.pending,
+          }))
+        }
+      }
+    } else {
+      console.warn('[Finance] fetchSummary failed:', res.message, res.statusCode)
+    }
+  }, [selectedYear, selectedCampus, fetchAnalyticsFallback])
 
   const fetchMonthlyCollection = useCallback(async () => {
     if (!selectedYear) return
@@ -175,9 +246,25 @@ export default function FinancePage() {
       academicYearId: selectedYear.id,
     }
     const res = await api.get<MonthlyData[]>('/finance/monthly-collection', { params })
-    if (res.success && res.data) setMonthlyData(Array.isArray(res.data) ? res.data : [])
+
+    const financeRows = res.success && Array.isArray(res.data) ? res.data : []
+    const hasFinanceData = financeRows.some((row) =>
+      Number(row.receivable) > 0 || Number(row.collected) > 0 || Number(row.pending) > 0 || Number(row.expenses) > 0,
+    )
+
+    if (hasFinanceData) {
+      setMonthlyData(financeRows)
+    } else {
+      const fallback = await fetchAnalyticsFallback()
+      if (fallback) {
+        setMonthlyData(buildMonthlyFallbackData(fallback.receivable, fallback.collected))
+      } else {
+        setMonthlyData(financeRows)
+      }
+    }
+
     setChartLoading(false)
-  }, [selectedYear, selectedCampus])
+  }, [selectedYear, selectedCampus, fetchAnalyticsFallback, buildMonthlyFallbackData])
 
   const fetchDailyCollection = useCallback(async () => {
     if (!selectedYear) return
