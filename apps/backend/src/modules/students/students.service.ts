@@ -63,6 +63,28 @@ const STUDENT_TEMPLATE_COLUMNS = [
   'Admission Note',
 ] as const
 
+const STUDENT_IMPORT_COLUMN_ALIASES: Partial<Record<(typeof STUDENT_TEMPLATE_COLUMNS)[number], string[]>> = {
+  'Class Section': ['Class & Section', 'Class-Section'],
+  'Date Of Birth': ['Date of Birth', 'DOB'],
+  'Blood Group': ['BloodGroup'],
+}
+
+const STUDENT_IMPORT_LEGACY_CLASS_COLUMNS = {
+  className: 'Class Name',
+  classCode: 'Class Code',
+  sectionName: 'Section Name',
+} as const
+
+type StudentImportMetadata =
+  | { isLegacy: true }
+  | {
+    isLegacy: false
+    templateVersion: string
+    schoolId: string
+    campusId: string
+    campusName: string
+  }
+
 const STUDENT_IMPORT_REQUIRED_COLUMNS: Array<(typeof STUDENT_TEMPLATE_COLUMNS)[number]> = [
   'Roll Number',
   'First Name',
@@ -140,6 +162,14 @@ export class StudentsService {
     return String(value ?? '').trim()
   }
 
+  private findHeaderIndex(normalizedFileHeaders: string[], candidates: string[]): number {
+    for (const candidate of candidates) {
+      const index = normalizedFileHeaders.indexOf(this.normalizeLookup(candidate))
+      if (index !== -1) return index
+    }
+    return -1
+  }
+
   private parseImportDate(value: unknown): { value?: string; error?: string } {
     if (value == null || value === '') {
       return { value: undefined }
@@ -173,10 +203,10 @@ export class StudentsService {
     return `${className}${classCodeText} | ${sectionName}`
   }
 
-  private readImportMetadata(workbook: XLSX.WorkBook) {
+  private readImportMetadata(workbook: XLSX.WorkBook): StudentImportMetadata {
     const metadataSheet = workbook.Sheets['Metadata']
     if (!metadataSheet) {
-      throw new BadRequestException('Metadata sheet is missing. Please download and use the latest import template.')
+      return { isLegacy: true }
     }
 
     const metadataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(metadataSheet, {
@@ -197,10 +227,11 @@ export class StudentsService {
     const metadataCampusName = metadata.get(STUDENT_IMPORT_METADATA_KEYS.campusName)
 
     if (!templateVersion || !metadataSchoolId || !metadataCampusId) {
-      throw new BadRequestException('Template metadata is incomplete. Please download a fresh template and try again.')
+      return { isLegacy: true }
     }
 
     return {
+      isLegacy: false,
       templateVersion,
       schoolId: metadataSchoolId,
       campusId: metadataCampusId,
@@ -264,21 +295,23 @@ export class StudentsService {
     }
 
     const metadata = this.readImportMetadata(workbook)
-    const currentVersion = STUDENT_IMPORT_TEMPLATE_VERSION.replace(/\.0$/, '')
-    const fileVersion = metadata.templateVersion.replace(/\.0$/, '')
+    if (!metadata.isLegacy) {
+      const currentVersion = STUDENT_IMPORT_TEMPLATE_VERSION.replace(/\.0$/, '')
+      const fileVersion = metadata.templateVersion.replace(/\.0$/, '')
 
-    if (fileVersion !== currentVersion) {
-      throw new BadRequestException(
-        `Unsupported template version "${metadata.templateVersion}". Please download the latest template (v${STUDENT_IMPORT_TEMPLATE_VERSION}).`,
-      )
-    }
-    if (metadata.schoolId !== schoolId) {
-      throw new BadRequestException('This template belongs to a different school. Please download a fresh template from your account.')
-    }
-    if (metadata.campusId !== campusId) {
-      throw new BadRequestException(
-        `Template campus mismatch. Template is for "${metadata.campusName}" but current campus is different.`,
-      )
+      if (fileVersion !== currentVersion) {
+        throw new BadRequestException(
+          `Unsupported template version "${metadata.templateVersion}". Please download the latest template (v${STUDENT_IMPORT_TEMPLATE_VERSION}).`,
+        )
+      }
+      if (metadata.schoolId !== schoolId) {
+        throw new BadRequestException('This template belongs to a different school. Please download a fresh template from your account.')
+      }
+      if (metadata.campusId !== campusId) {
+        throw new BadRequestException(
+          `Template campus mismatch. Template is for "${metadata.campusName}" but current campus is different.`,
+        )
+      }
     }
 
     const sheet = workbook.Sheets['Students']
@@ -296,21 +329,32 @@ export class StudentsService {
     const normalizedFileHeaders = headerRow.map((h) => this.normalizeLookup(h))
 
     const columnMap = new Map<string, number>()
-    const missingHeaders: string[] = []
-
     STUDENT_TEMPLATE_COLUMNS.forEach((col) => {
-      const normalizedTarget = this.normalizeLookup(col)
-      const index = normalizedFileHeaders.indexOf(normalizedTarget)
+      const aliases = STUDENT_IMPORT_COLUMN_ALIASES[col] || []
+      const index = this.findHeaderIndex(normalizedFileHeaders, [col, ...aliases])
       if (index !== -1) {
         columnMap.set(col, index)
-      } else {
-        missingHeaders.push(col)
       }
     })
 
-    if (missingHeaders.length > 0) {
+    const legacyClassNameIndex = this.findHeaderIndex(normalizedFileHeaders, [STUDENT_IMPORT_LEGACY_CLASS_COLUMNS.className])
+    const legacyClassCodeIndex = this.findHeaderIndex(normalizedFileHeaders, [STUDENT_IMPORT_LEGACY_CLASS_COLUMNS.classCode])
+    const legacySectionNameIndex = this.findHeaderIndex(normalizedFileHeaders, [STUDENT_IMPORT_LEGACY_CLASS_COLUMNS.sectionName])
+    const canComposeClassSection =
+      !columnMap.has('Class Section')
+      && legacyClassNameIndex !== -1
+      && legacySectionNameIndex !== -1
+
+    const missingRequiredHeaders = STUDENT_IMPORT_REQUIRED_COLUMNS.filter((requiredColumn) => {
+      if (requiredColumn === 'Class Section' && canComposeClassSection) {
+        return false
+      }
+      return !columnMap.has(requiredColumn)
+    })
+
+    if (missingRequiredHeaders.length > 0) {
       throw new BadRequestException(
-        `Invalid template columns. Missing: ${missingHeaders.join(', ')}. Please download and use the latest template.`,
+        `Invalid template columns. Missing required: ${missingRequiredHeaders.join(', ')}. Please download and use the latest template.`,
       )
     }
 
@@ -322,6 +366,17 @@ export class StudentsService {
     const rowPayloads = nonEmptyRows.map((row, index) => {
       const values: any = {}
       STUDENT_TEMPLATE_COLUMNS.forEach((col) => {
+        if (col === 'Class Section' && !columnMap.has(col) && canComposeClassSection) {
+          const className = this.toStringValue(row[legacyClassNameIndex])
+          const sectionName = this.toStringValue(row[legacySectionNameIndex])
+          const classCode = legacyClassCodeIndex !== -1 ? this.toStringValue(row[legacyClassCodeIndex]) : ''
+          values[col] =
+            className && sectionName
+              ? this.buildClassSectionLabel(className, sectionName, classCode || undefined)
+              : ''
+          return
+        }
+
         const colIdx = columnMap.get(col)
         values[col] = this.toStringValue(colIdx !== undefined ? row[colIdx] : '')
       })
