@@ -617,6 +617,12 @@ export class FinanceCronService {
       throw new Error('Invalid due date')
     }
 
+    if (opts.dueDate) {
+      if (dueDate < yearStart || dueDate > yearEnd) {
+        throw new Error(`Custom due date must be within the selected academic year (${yearStart.toLocaleDateString()} - ${yearEnd.toLocaleDateString()})`)
+      }
+    }
+
     if (!opts.dueDate && now >= yearStart && now <= yearEnd && dueDate < now) {
       dueDate.setMonth(dueDate.getMonth() + 1)
     }

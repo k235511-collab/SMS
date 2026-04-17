@@ -149,17 +149,33 @@ export class AnalyticsService {
             this.prisma.subject.count({ where: subjectWhere }),
             this.prisma.academicYear.count({ where: { schoolId } }),
             this.prisma.campus.count({ where: { schoolId } }),
-            // Fee collection periods (actual payments received)
+            // Fee collection periods (actual payments received for the selected context)
             this.prisma.feePayment.aggregate({
-                where: { schoolId, paidAt: { gte: today, lt: tomorrow }, ...campusPaymentFilter },
+                where: {
+                    schoolId,
+                    paidAt: { gte: today, lt: tomorrow },
+                    ...(resolvedAcademicYear ? { invoice: { academicYearId: resolvedAcademicYear.id } } : {}),
+                    ...campusPaymentFilter
+                },
                 _sum: { amount: true },
             }),
             this.prisma.feePayment.aggregate({
-                where: { schoolId, paidAt: { gte: monthStart }, ...campusPaymentFilter },
+                where: {
+                    schoolId,
+                    paidAt: { gte: monthStart },
+                    ...(resolvedAcademicYear ? { invoice: { academicYearId: resolvedAcademicYear.id } } : {}),
+                    ...campusPaymentFilter
+                },
                 _sum: { amount: true },
             }),
             this.prisma.feePayment.aggregate({
-                where: { schoolId, paidAt: { gte: yearStart, ...(yearEnd ? { lte: yearEnd } : {}) }, ...campusPaymentFilter },
+                where: {
+                    schoolId,
+                    ...(resolvedAcademicYear
+                        ? { invoice: { academicYearId: resolvedAcademicYear.id } }
+                        : { paidAt: { gte: yearStart, ...(yearEnd ? { lte: yearEnd } : {}) } }),
+                    ...campusPaymentFilter
+                },
                 _sum: { amount: true },
             }),
             // Pending fee: sum of (totalAmount - paidAmount) for all unpaid/partial/overdue invoices in current academic year

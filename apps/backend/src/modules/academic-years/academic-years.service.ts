@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common'
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import { PaginationDto, PaginatedResult } from '../../common/dto'
 import { CreateAcademicYearDto, UpdateAcademicYearDto } from './dto'
@@ -16,6 +16,25 @@ export class AcademicYearsService {
       throw new ConflictException('Academic year with this name already exists')
     }
 
+    const startDate = new Date(dto.startDate)
+    const endDate = new Date(dto.endDate)
+
+    if (startDate >= endDate) {
+      throw new BadRequestException('Start date must be before end date')
+    }
+
+    const overlapping = await this.prisma.academicYear.findFirst({
+      where: {
+        schoolId,
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
+      },
+    })
+
+    if (overlapping) {
+      throw new ConflictException(`Academic year dates overlap with existing year '${overlapping.name}'`)
+    }
+
     // If setting as current, unset others in the same school
     if (dto.isCurrent) {
       await this.prisma.academicYear.updateMany({
@@ -27,8 +46,8 @@ export class AcademicYearsService {
     return this.prisma.academicYear.create({
       data: {
         name: dto.name,
-        startDate: new Date(dto.startDate),
-        endDate: new Date(dto.endDate),
+        startDate,
+        endDate,
         isCurrent: dto.isCurrent ?? false,
         schoolId,
       },
@@ -68,7 +87,29 @@ export class AcademicYearsService {
   }
 
   async update(id: string, schoolId: string, dto: UpdateAcademicYearDto) {
-    await this.findById(id, schoolId)
+    const currentYear = await this.findById(id, schoolId)
+
+    const startDate = dto.startDate ? new Date(dto.startDate) : currentYear.startDate
+    const endDate = dto.endDate ? new Date(dto.endDate) : currentYear.endDate
+
+    if (startDate >= endDate) {
+      throw new BadRequestException('Start date must be before end date')
+    }
+
+    if (dto.startDate || dto.endDate) {
+      const overlapping = await this.prisma.academicYear.findFirst({
+        where: {
+          schoolId,
+          id: { not: id },
+          startDate: { lte: endDate },
+          endDate: { gte: startDate },
+        },
+      })
+
+      if (overlapping) {
+        throw new ConflictException(`Academic year dates overlap with existing year '${overlapping.name}'`)
+      }
+    }
 
     // If setting as current, unset others in the same school
     if (dto.isCurrent) {
@@ -79,8 +120,8 @@ export class AcademicYearsService {
     }
 
     const data: any = { ...dto }
-    if (dto.startDate) data.startDate = new Date(dto.startDate)
-    if (dto.endDate) data.endDate = new Date(dto.endDate)
+    if (dto.startDate) data.startDate = startDate
+    if (dto.endDate) data.endDate = endDate
 
     return this.prisma.academicYear.update({ where: { id }, data })
   }

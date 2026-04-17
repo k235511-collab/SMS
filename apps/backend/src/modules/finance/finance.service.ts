@@ -1005,11 +1005,26 @@ export class FinanceService {
 
       const [invoiceAgg, paymentAgg, expenseAgg] = await this.prisma.$transaction([
         this.prisma.invoice.aggregate({
-          where: { schoolId, dueDate: { gte: start, lte: end }, ...campusFilter },
+          where: {
+            schoolId,
+            OR: [
+              { academicYearId: ay.id },
+              { academicYearId: null, dueDate: { gte: start, lte: end } }
+            ],
+            ...campusFilter,
+          },
           _sum: { totalAmount: true },
         }),
         this.prisma.feePayment.aggregate({
-          where: { schoolId, deletedAt: null, paidAt: { gte: start, lte: end }, ...campusFilter },
+          where: {
+            schoolId,
+            deletedAt: null,
+            OR: [
+              { invoice: { academicYearId: ay.id } },
+              { invoice: { academicYearId: null }, paidAt: { gte: start, lte: end } }
+            ],
+            ...campusFilter,
+          },
           _sum: { amount: true },
         }),
         this.prisma.expense.aggregate({
