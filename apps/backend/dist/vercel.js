@@ -37372,7 +37372,7 @@ module.exports = Json;
  */
 var zlib = __webpack_require__(43106);
 
-var engine = __webpack_require__(16861);
+var engine = __webpack_require__(39242);
 var util = __webpack_require__(17615);
 
 /**
@@ -66512,10 +66512,10 @@ exports.ExclusiveParametersError = ExclusiveParametersError;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.validateCronExpression = exports.timeout = exports.sendAt = exports.CronTime = exports.CronJob = void 0;
-const time_1 = __webpack_require__(39242);
+const time_1 = __webpack_require__(16861);
 var job_1 = __webpack_require__(93752);
 Object.defineProperty(exports, "CronJob", ({ enumerable: true, get: function () { return job_1.CronJob; } }));
-var time_2 = __webpack_require__(39242);
+var time_2 = __webpack_require__(16861);
 Object.defineProperty(exports, "CronTime", ({ enumerable: true, get: function () { return time_2.CronTime; } }));
 const sendAt = (cronTime) => new time_1.CronTime(cronTime).sendAt();
 exports.sendAt = sendAt;
@@ -66544,7 +66544,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CronJob = void 0;
 const child_process_1 = __webpack_require__(35317);
 const errors_1 = __webpack_require__(13052);
-const time_1 = __webpack_require__(39242);
+const time_1 = __webpack_require__(16861);
 class CronJob {
     get isActive() {
         return this._isActive;
@@ -66793,7 +66793,7 @@ exports.CronJob = CronJob;
 
 /***/ },
 
-/***/ 39242
+/***/ 16861
 (__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -208690,7 +208690,7 @@ exports.decode = function (buf, filenameEncoding, allowUnknownFormat) {
 
 /***/ },
 
-/***/ 16861
+/***/ 39242
 (__unused_webpack_module, exports, __webpack_require__) {
 
 exports.extract = __webpack_require__(22599)
@@ -211804,6 +211804,21 @@ let AcademicYearsService = class AcademicYearsService {
         if (existing) {
             throw new common_1.ConflictException('Academic year with this name already exists');
         }
+        const startDate = new Date(dto.startDate);
+        const endDate = new Date(dto.endDate);
+        if (startDate >= endDate) {
+            throw new common_1.BadRequestException('Start date must be before end date');
+        }
+        const overlapping = await this.prisma.academicYear.findFirst({
+            where: {
+                schoolId,
+                startDate: { lte: endDate },
+                endDate: { gte: startDate },
+            },
+        });
+        if (overlapping) {
+            throw new common_1.ConflictException(`Academic year dates overlap with existing year '${overlapping.name}'`);
+        }
         // If setting as current, unset others in the same school
         if (dto.isCurrent) {
             await this.prisma.academicYear.updateMany({
@@ -211814,8 +211829,8 @@ let AcademicYearsService = class AcademicYearsService {
         return this.prisma.academicYear.create({
             data: {
                 name: dto.name,
-                startDate: new Date(dto.startDate),
-                endDate: new Date(dto.endDate),
+                startDate,
+                endDate,
                 isCurrent: dto.isCurrent ?? false,
                 schoolId,
             },
@@ -211847,7 +211862,25 @@ let AcademicYearsService = class AcademicYearsService {
         return year;
     }
     async update(id, schoolId, dto) {
-        await this.findById(id, schoolId);
+        const currentYear = await this.findById(id, schoolId);
+        const startDate = dto.startDate ? new Date(dto.startDate) : currentYear.startDate;
+        const endDate = dto.endDate ? new Date(dto.endDate) : currentYear.endDate;
+        if (startDate >= endDate) {
+            throw new common_1.BadRequestException('Start date must be before end date');
+        }
+        if (dto.startDate || dto.endDate) {
+            const overlapping = await this.prisma.academicYear.findFirst({
+                where: {
+                    schoolId,
+                    id: { not: id },
+                    startDate: { lte: endDate },
+                    endDate: { gte: startDate },
+                },
+            });
+            if (overlapping) {
+                throw new common_1.ConflictException(`Academic year dates overlap with existing year '${overlapping.name}'`);
+            }
+        }
         // If setting as current, unset others in the same school
         if (dto.isCurrent) {
             await this.prisma.academicYear.updateMany({
@@ -211857,9 +211890,9 @@ let AcademicYearsService = class AcademicYearsService {
         }
         const data = { ...dto };
         if (dto.startDate)
-            data.startDate = new Date(dto.startDate);
+            data.startDate = startDate;
         if (dto.endDate)
-            data.endDate = new Date(dto.endDate);
+            data.endDate = endDate;
         return this.prisma.academicYear.update({ where: { id }, data });
     }
     async remove(id, schoolId) {
@@ -213191,17 +213224,33 @@ let AnalyticsService = class AnalyticsService {
             this.prisma.subject.count({ where: subjectWhere }),
             this.prisma.academicYear.count({ where: { schoolId } }),
             this.prisma.campus.count({ where: { schoolId } }),
-            // Fee collection periods (actual payments received)
+            // Fee collection periods (actual payments received for the selected context)
             this.prisma.feePayment.aggregate({
-                where: { schoolId, paidAt: { gte: today, lt: tomorrow }, ...campusPaymentFilter },
+                where: {
+                    schoolId,
+                    paidAt: { gte: today, lt: tomorrow },
+                    ...(resolvedAcademicYear ? { invoice: { academicYearId: resolvedAcademicYear.id } } : {}),
+                    ...campusPaymentFilter
+                },
                 _sum: { amount: true },
             }),
             this.prisma.feePayment.aggregate({
-                where: { schoolId, paidAt: { gte: monthStart }, ...campusPaymentFilter },
+                where: {
+                    schoolId,
+                    paidAt: { gte: monthStart },
+                    ...(resolvedAcademicYear ? { invoice: { academicYearId: resolvedAcademicYear.id } } : {}),
+                    ...campusPaymentFilter
+                },
                 _sum: { amount: true },
             }),
             this.prisma.feePayment.aggregate({
-                where: { schoolId, paidAt: { gte: yearStart, ...(yearEnd ? { lte: yearEnd } : {}) }, ...campusPaymentFilter },
+                where: {
+                    schoolId,
+                    ...(resolvedAcademicYear
+                        ? { invoice: { academicYearId: resolvedAcademicYear.id } }
+                        : { paidAt: { gte: yearStart, ...(yearEnd ? { lte: yearEnd } : {}) } }),
+                    ...campusPaymentFilter
+                },
                 _sum: { amount: true },
             }),
             // Pending fee: sum of (totalAmount - paidAmount) for all unpaid/partial/overdue invoices in current academic year
@@ -217277,11 +217326,11 @@ let ExamsController = class ExamsController {
     getResultsByExam(examId, schoolId, teacherId, user) {
         return this.examsService.getResultsByExam(examId, schoolId, teacherId, user?.userId ?? user?.id ?? user?.sub ?? null);
     }
-    getStudentResults(studentId, schoolId, teacherId, user, startDate, endDate) {
-        return this.examsService.getStudentResults(studentId, schoolId, startDate, endDate, teacherId ?? null, user?.userId ?? user?.id ?? user?.sub ?? null);
+    getStudentResults(studentId, schoolId, campusId, teacherId, user, academicYearId, classId, sectionId, startDate, endDate) {
+        return this.examsService.getStudentResults(studentId, schoolId, academicYearId, classId, sectionId, campusId, startDate, endDate, teacherId ?? null, user?.userId ?? user?.id ?? user?.sub ?? null);
     }
-    getStudentResultsSummary(studentId, schoolId, teacherId, user, startDate, endDate) {
-        return this.examsService.getStudentResultsSummary(studentId, schoolId, startDate, endDate, teacherId ?? null, user?.userId ?? user?.id ?? user?.sub ?? null);
+    getStudentResultsSummary(studentId, schoolId, teacherId, user, academicYearId, startDate, endDate) {
+        return this.examsService.getStudentResultsSummary(studentId, schoolId, academicYearId, startDate, endDate, teacherId ?? null, user?.userId ?? user?.id ?? user?.sub ?? null);
     }
 };
 exports.ExamsController = ExamsController;
@@ -217589,12 +217638,16 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 200, description: 'Student results' }),
     __param(0, (0, common_1.Param)('studentId')),
     __param(1, (0, decorators_1.TenantId)()),
-    __param(2, (0, decorators_1.TeacherId)()),
-    __param(3, (0, decorators_1.CurrentUser)()),
-    __param(4, (0, common_1.Query)('startDate')),
-    __param(5, (0, common_1.Query)('endDate')),
+    __param(2, (0, decorators_1.CampusId)()),
+    __param(3, (0, decorators_1.TeacherId)()),
+    __param(4, (0, decorators_1.CurrentUser)()),
+    __param(5, (0, common_1.Query)('academicYearId')),
+    __param(6, (0, common_1.Query)('classId')),
+    __param(7, (0, common_1.Query)('sectionId')),
+    __param(8, (0, common_1.Query)('startDate')),
+    __param(9, (0, common_1.Query)('endDate')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, Object, Object, String, String]),
+    __metadata("design:paramtypes", [String, String, String, Object, Object, String, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ExamsController.prototype, "getStudentResults", null);
 __decorate([
@@ -217606,10 +217659,11 @@ __decorate([
     __param(1, (0, decorators_1.TenantId)()),
     __param(2, (0, decorators_1.TeacherId)()),
     __param(3, (0, decorators_1.CurrentUser)()),
-    __param(4, (0, common_1.Query)('startDate')),
-    __param(5, (0, common_1.Query)('endDate')),
+    __param(4, (0, common_1.Query)('academicYearId')),
+    __param(5, (0, common_1.Query)('startDate')),
+    __param(6, (0, common_1.Query)('endDate')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, Object, Object, String, String]),
+    __metadata("design:paramtypes", [String, String, Object, Object, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ExamsController.prototype, "getStudentResultsSummary", null);
 exports.ExamsController = ExamsController = __decorate([
@@ -217815,14 +217869,7 @@ let ExamsService = class ExamsService {
             where.subjectId = query.subjectId;
         }
         if (query.academicYearId) {
-            if (!where.AND)
-                where.AND = [];
-            where.AND.push({
-                OR: [
-                    { academicYearId: query.academicYearId },
-                    { academicYearId: null },
-                ],
-            });
+            where.academicYearId = query.academicYearId;
         }
         const [data, total] = await this.prisma.$transaction([
             this.prisma.exam.findMany({
@@ -218084,6 +218131,11 @@ let ExamsService = class ExamsService {
         }));
     }
     async getExamStudentResultsList(schoolId, query, campusId, teacherId, requesterUserId) {
+        const effectiveAcademicYearId = query.academicYearId
+            ?? (await this.prisma.academicYear.findFirst({
+                where: { schoolId, isCurrent: true },
+                select: { id: true },
+            }))?.id;
         const effectiveTeacherId = await this.resolveEffectiveTeacherId(schoolId, teacherId, requesterUserId);
         const examWhere = { schoolId };
         if (campusId)
@@ -218096,8 +218148,8 @@ let ExamsService = class ExamsService {
             examWhere.subjectId = query.subjectId;
         if (query.sectionId)
             examWhere.sectionId = query.sectionId;
-        if (query.academicYearId)
-            examWhere.academicYearId = query.academicYearId;
+        if (effectiveAcademicYearId)
+            examWhere.academicYearId = effectiveAcademicYearId;
         const search = query.search?.trim();
         const enrollmentWhere = {
             schoolId,
@@ -218107,7 +218159,7 @@ let ExamsService = class ExamsService {
             },
         };
         if (effectiveTeacherId) {
-            const accessConditions = await this.teacherScope.getExamAccessConditions(effectiveTeacherId, schoolId, query.academicYearId);
+            const accessConditions = await this.teacherScope.getExamAccessConditions(effectiveTeacherId, schoolId, effectiveAcademicYearId);
             if (accessConditions.length === 0) {
                 return new dto_1.PaginatedResult([], 0, query.page ?? 1, query.pageSize ?? 20);
             }
@@ -218127,8 +218179,8 @@ let ExamsService = class ExamsService {
             enrollmentWhere.classId = query.classId;
         if (query.sectionId)
             enrollmentWhere.sectionId = query.sectionId;
-        if (query.academicYearId)
-            enrollmentWhere.academicYearId = query.academicYearId;
+        if (effectiveAcademicYearId)
+            enrollmentWhere.academicYearId = effectiveAcademicYearId;
         if (search) {
             enrollmentWhere.student.OR = [
                 { firstName: { contains: search, mode: 'insensitive' } },
@@ -218438,7 +218490,7 @@ let ExamsService = class ExamsService {
             orderBy: [{ subject: { name: 'asc' } }, { marksObtained: 'desc' }],
         });
     }
-    async getStudentResults(studentId, schoolId, startDate, endDate, teacherId, requesterUserId) {
+    async getStudentResults(studentId, schoolId, academicYearId, classId, sectionId, campusId, startDate, endDate, teacherId, requesterUserId) {
         const student = await this.prisma.student.findFirst({
             where: { id: studentId, schoolId },
         });
@@ -218452,9 +218504,22 @@ let ExamsService = class ExamsService {
                 sectionId: student.sectionId ?? undefined,
             });
         }
+        const effectiveAcademicYearId = academicYearId
+            ?? (await this.prisma.academicYear.findFirst({
+                where: { schoolId, isCurrent: true },
+                select: { id: true },
+            }))?.id;
         const where = { studentId, schoolId };
-        if (startDate || endDate) {
+        if (effectiveAcademicYearId || classId || sectionId || campusId || startDate || endDate) {
             where.exam = {};
+            if (effectiveAcademicYearId)
+                where.exam.academicYearId = effectiveAcademicYearId;
+            if (classId)
+                where.exam.classId = classId;
+            if (sectionId)
+                where.exam.sectionId = sectionId;
+            if (campusId)
+                where.exam.campusId = campusId;
             if (startDate)
                 where.exam.startDate = { gte: new Date(startDate) };
             if (endDate)
@@ -218469,8 +218534,8 @@ let ExamsService = class ExamsService {
             orderBy: { exam: { createdAt: 'desc' } },
         });
     }
-    async getStudentResultsSummary(studentId, schoolId, startDate, endDate, teacherId, requesterUserId) {
-        const results = await this.getStudentResults(studentId, schoolId, startDate, endDate, teacherId, requesterUserId);
+    async getStudentResultsSummary(studentId, schoolId, academicYearId, startDate, endDate, teacherId, requesterUserId) {
+        const results = await this.getStudentResults(studentId, schoolId, academicYearId, undefined, undefined, undefined, startDate, endDate, teacherId, requesterUserId);
         // Group results by exam
         const examGroups = results.reduce((acc, result) => {
             const examId = result.examId;
@@ -218944,7 +219009,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 var _a, _b, _c;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.UpdateExpenseDto = exports.CreateExpenseDto = exports.UpdateExpenseCategoryDto = exports.CreateExpenseCategoryDto = exports.PreviewInvoicesQueryDto = exports.BatchGenerateInvoicesDto = exports.RecordPaymentDto = exports.GetInvoicesDto = exports.UpdateInvoiceDto = exports.CreateInvoiceDto = exports.UpdateFeeStructureDto = exports.CreateFeeStructureDto = void 0;
+exports.UpdateExpenseDto = exports.CreateExpenseDto = exports.UpdateExpenseCategoryDto = exports.CreateExpenseCategoryDto = exports.PreviewInvoicesQueryDto = exports.BatchGenerateInvoicesDto = exports.RecordPaymentDto = exports.GetPendingFeesDto = exports.GetPaymentsDto = exports.GetInvoicesDto = exports.UpdateInvoiceDto = exports.CreateInvoiceDto = exports.UpdateFeeStructureDto = exports.CreateFeeStructureDto = void 0;
 const class_validator_1 = __webpack_require__(70966);
 const swagger_1 = __webpack_require__(58315);
 const client_1 = __webpack_require__(98412);
@@ -219128,6 +219193,54 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], GetInvoicesDto.prototype, "studentId", void 0);
+class GetPaymentsDto extends dto_1.PaginationDto {
+    method;
+    academicYearId;
+}
+exports.GetPaymentsDto = GetPaymentsDto;
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ enum: client_1.PaymentMethod }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GetPaymentsDto.prototype, "method", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Academic year ID used to scope payments by their invoice context' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GetPaymentsDto.prototype, "academicYearId", void 0);
+class GetPendingFeesDto extends dto_1.PaginationDto {
+    classId;
+    sectionId;
+    status;
+    academicYearId;
+}
+exports.GetPendingFeesDto = GetPendingFeesDto;
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Class ID filter' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GetPendingFeesDto.prototype, "classId", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Section ID filter' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GetPendingFeesDto.prototype, "sectionId", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Invoice status filter' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GetPendingFeesDto.prototype, "status", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Academic year ID filter' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], GetPendingFeesDto.prototype, "academicYearId", void 0);
 // ─── Payment DTOs ────────────────────────────────────────────────
 class RecordPaymentDto {
     invoiceId;
@@ -219389,7 +219502,7 @@ __decorate([
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.UpdateExpenseDto = exports.CreateExpenseDto = exports.UpdateExpenseCategoryDto = exports.CreateExpenseCategoryDto = exports.PreviewInvoicesQueryDto = exports.BatchGenerateInvoicesDto = exports.GetInvoicesDto = exports.RecordPaymentDto = exports.UpdateInvoiceDto = exports.CreateInvoiceDto = exports.UpdateFeeStructureDto = exports.CreateFeeStructureDto = void 0;
+exports.UpdateExpenseDto = exports.CreateExpenseDto = exports.UpdateExpenseCategoryDto = exports.CreateExpenseCategoryDto = exports.PreviewInvoicesQueryDto = exports.BatchGenerateInvoicesDto = exports.GetPendingFeesDto = exports.GetPaymentsDto = exports.GetInvoicesDto = exports.RecordPaymentDto = exports.UpdateInvoiceDto = exports.CreateInvoiceDto = exports.UpdateFeeStructureDto = exports.CreateFeeStructureDto = void 0;
 var finance_dto_1 = __webpack_require__(86745);
 Object.defineProperty(exports, "CreateFeeStructureDto", ({ enumerable: true, get: function () { return finance_dto_1.CreateFeeStructureDto; } }));
 Object.defineProperty(exports, "UpdateFeeStructureDto", ({ enumerable: true, get: function () { return finance_dto_1.UpdateFeeStructureDto; } }));
@@ -219397,6 +219510,8 @@ Object.defineProperty(exports, "CreateInvoiceDto", ({ enumerable: true, get: fun
 Object.defineProperty(exports, "UpdateInvoiceDto", ({ enumerable: true, get: function () { return finance_dto_1.UpdateInvoiceDto; } }));
 Object.defineProperty(exports, "RecordPaymentDto", ({ enumerable: true, get: function () { return finance_dto_1.RecordPaymentDto; } }));
 Object.defineProperty(exports, "GetInvoicesDto", ({ enumerable: true, get: function () { return finance_dto_1.GetInvoicesDto; } }));
+Object.defineProperty(exports, "GetPaymentsDto", ({ enumerable: true, get: function () { return finance_dto_1.GetPaymentsDto; } }));
+Object.defineProperty(exports, "GetPendingFeesDto", ({ enumerable: true, get: function () { return finance_dto_1.GetPendingFeesDto; } }));
 Object.defineProperty(exports, "BatchGenerateInvoicesDto", ({ enumerable: true, get: function () { return finance_dto_1.BatchGenerateInvoicesDto; } }));
 Object.defineProperty(exports, "PreviewInvoicesQueryDto", ({ enumerable: true, get: function () { return finance_dto_1.PreviewInvoicesQueryDto; } }));
 Object.defineProperty(exports, "CreateExpenseCategoryDto", ({ enumerable: true, get: function () { return finance_dto_1.CreateExpenseCategoryDto; } }));
@@ -219519,29 +219634,25 @@ let FinanceCronService = FinanceCronService_1 = class FinanceCronService {
     // ACTIVE students enrolled in the current academic year
     // ═══════════════════════════════════════════════════════════════
     async generateMonthlyInvoices() {
-        this.logger.log('Running monthly invoice generation...');
-        await this.generateRecurringInvoices('MONTHLY');
+        this.logger.log('Skipping monthly invoice generation (manual voucher mode is enabled).');
     }
     // ═══════════════════════════════════════════════════════════════
     // QUARTERLY INVOICE GENERATION — runs on 1st of Jan, Apr, Jul, Oct at 2:30 AM
     // ═══════════════════════════════════════════════════════════════
     async generateQuarterlyInvoices() {
-        this.logger.log('Running quarterly invoice generation...');
-        await this.generateRecurringInvoices('QUARTERLY');
+        this.logger.log('Skipping quarterly invoice generation (manual voucher mode is enabled).');
     }
     // ═══════════════════════════════════════════════════════════════
     // SEMI-ANNUAL INVOICE GENERATION — runs on 1st of Jan, Jul at 3:00 AM
     // ═══════════════════════════════════════════════════════════════
     async generateSemiAnnualInvoices() {
-        this.logger.log('Running semi-annual invoice generation...');
-        await this.generateRecurringInvoices('SEMI_ANNUAL');
+        this.logger.log('Skipping semi-annual invoice generation (manual voucher mode is enabled).');
     }
     // ═══════════════════════════════════════════════════════════════
     // ANNUAL INVOICE GENERATION — runs on Jan 1st at 3:30 AM
     // ═══════════════════════════════════════════════════════════════
     async generateAnnualInvoices() {
-        this.logger.log('Running annual invoice generation...');
-        await this.generateRecurringInvoices('ANNUAL');
+        this.logger.log('Skipping annual invoice generation (manual voucher mode is enabled).');
     }
     // ───────────────────────────────────────────────────────────────
     // Core recurring invoice generation logic
@@ -219886,16 +219997,18 @@ let FinanceCronService = FinanceCronService_1 = class FinanceCronService {
         if (!feeStructure) {
             throw new Error('Fee structure not found');
         }
-        // Get academic year
-        let yearId = opts.academicYearId;
-        if (!yearId) {
-            const currentYear = await this.prisma.academicYear.findFirst({
+        // Get target academic year context
+        const targetYear = opts.academicYearId
+            ? await this.prisma.academicYear.findFirst({
+                where: { id: opts.academicYearId, schoolId },
+                select: { id: true, startDate: true, endDate: true },
+            })
+            : await this.prisma.academicYear.findFirst({
                 where: { schoolId, isCurrent: true },
-                select: { id: true },
+                select: { id: true, startDate: true, endDate: true },
             });
-            yearId = currentYear?.id;
-        }
-        if (!yearId) {
+        const yearId = targetYear?.id;
+        if (!yearId || !targetYear) {
             throw new Error('No current academic year found');
         }
         const effectiveClassId = opts.classId || feeStructure.classId || undefined;
@@ -219939,11 +220052,30 @@ let FinanceCronService = FinanceCronService_1 = class FinanceCronService {
         // Calculate due date
         const now = new Date();
         const dueDay = feeStructure.dueDay || 15;
+        const yearStart = new Date(targetYear.startDate);
+        const yearEnd = new Date(targetYear.endDate);
+        yearStart.setHours(0, 0, 0, 0);
+        yearEnd.setHours(23, 59, 59, 999);
+        const monthAnchor = now < yearStart ? yearStart : now > yearEnd ? yearEnd : now;
         const dueDate = opts.dueDate
             ? new Date(opts.dueDate)
-            : new Date(now.getFullYear(), now.getMonth(), Math.min(dueDay, 28));
-        if (!opts.dueDate && dueDate < now) {
+            : new Date(monthAnchor.getFullYear(), monthAnchor.getMonth(), Math.min(dueDay, 28));
+        if (!Number.isFinite(dueDate.getTime())) {
+            throw new Error('Invalid due date');
+        }
+        if (opts.dueDate) {
+            if (dueDate < yearStart || dueDate > yearEnd) {
+                throw new Error(`Custom due date must be within the selected academic year (${yearStart.toLocaleDateString()} - ${yearEnd.toLocaleDateString()})`);
+            }
+        }
+        if (!opts.dueDate && now >= yearStart && now <= yearEnd && dueDate < now) {
             dueDate.setMonth(dueDate.getMonth() + 1);
+        }
+        if (!opts.dueDate && dueDate < yearStart) {
+            dueDate.setTime(new Date(yearStart.getFullYear(), yearStart.getMonth(), Math.min(dueDay, 28)).getTime());
+        }
+        if (!opts.dueDate && dueDate > yearEnd) {
+            dueDate.setTime(new Date(yearEnd.getFullYear(), yearEnd.getMonth(), Math.min(dueDay, 28)).getTime());
         }
         // Check existing invoices by academic year
         const existingInvoices = await this.prisma.invoice.findMany({
@@ -220146,14 +220278,14 @@ let FinanceController = class FinanceController {
     getYearlyCollection(schoolId, campusId) {
         return this.financeService.getYearlyCollection(schoolId, campusId);
     }
-    getMonthlyCollection(schoolId, startDate, endDate, campusId) {
-        return this.financeService.getMonthlyCollection(schoolId, startDate, endDate, campusId);
+    getMonthlyCollection(schoolId, startDate, endDate, academicYearId, campusId) {
+        return this.financeService.getMonthlyCollection(schoolId, startDate, endDate, campusId, academicYearId);
     }
-    getTopDefaulters(schoolId, startDate, endDate, limit, campusId) {
-        return this.financeService.getTopDefaulters(schoolId, startDate, endDate, limit ? parseInt(limit) : 10, campusId);
+    getTopDefaulters(schoolId, startDate, endDate, academicYearId, limit, campusId) {
+        return this.financeService.getTopDefaulters(schoolId, startDate, endDate, limit ? parseInt(limit) : 10, campusId, academicYearId);
     }
-    getTopDiscounts(schoolId, startDate, endDate, limit, campusId) {
-        return this.financeService.getTopDiscounts(schoolId, startDate, endDate, limit ? parseInt(limit) : 10, campusId);
+    getTopDiscounts(schoolId, startDate, endDate, academicYearId, limit, campusId) {
+        return this.financeService.getTopDiscounts(schoolId, startDate, endDate, limit ? parseInt(limit) : 10, campusId, academicYearId);
     }
     getPendingFees(schoolId, query, campusId) {
         return this.financeService.getPendingFees(schoolId, query, campusId);
@@ -220348,7 +220480,7 @@ __decorate([
     __param(1, (0, common_1.Query)()),
     __param(2, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String]),
+    __metadata("design:paramtypes", [String, typeof (_l = typeof dto_1.GetPaymentsDto !== "undefined" && dto_1.GetPaymentsDto) === "function" ? _l : Object, String]),
     __metadata("design:returntype", void 0)
 ], FinanceController.prototype, "findAllPayments", null);
 __decorate([
@@ -220360,7 +220492,7 @@ __decorate([
     __param(1, (0, common_1.Query)()),
     __param(2, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String]),
+    __metadata("design:paramtypes", [String, typeof (_m = typeof dto_1.GetPaymentsDto !== "undefined" && dto_1.GetPaymentsDto) === "function" ? _m : Object, String]),
     __metadata("design:returntype", void 0)
 ], FinanceController.prototype, "findDeletedPayments", null);
 __decorate([
@@ -220464,9 +220596,10 @@ __decorate([
     __param(0, (0, decorators_1.TenantId)()),
     __param(1, (0, common_1.Query)('startDate')),
     __param(2, (0, common_1.Query)('endDate')),
-    __param(3, (0, decorators_1.CampusId)()),
+    __param(3, (0, common_1.Query)('academicYearId')),
+    __param(4, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String, String]),
+    __metadata("design:paramtypes", [String, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], FinanceController.prototype, "getMonthlyCollection", null);
 __decorate([
@@ -220477,10 +220610,11 @@ __decorate([
     __param(0, (0, decorators_1.TenantId)()),
     __param(1, (0, common_1.Query)('startDate')),
     __param(2, (0, common_1.Query)('endDate')),
-    __param(3, (0, common_1.Query)('limit')),
-    __param(4, (0, decorators_1.CampusId)()),
+    __param(3, (0, common_1.Query)('academicYearId')),
+    __param(4, (0, common_1.Query)('limit')),
+    __param(5, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String, String, String]),
+    __metadata("design:paramtypes", [String, String, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], FinanceController.prototype, "getTopDefaulters", null);
 __decorate([
@@ -220491,10 +220625,11 @@ __decorate([
     __param(0, (0, decorators_1.TenantId)()),
     __param(1, (0, common_1.Query)('startDate')),
     __param(2, (0, common_1.Query)('endDate')),
-    __param(3, (0, common_1.Query)('limit')),
-    __param(4, (0, decorators_1.CampusId)()),
+    __param(3, (0, common_1.Query)('academicYearId')),
+    __param(4, (0, common_1.Query)('limit')),
+    __param(5, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String, String, String]),
+    __metadata("design:paramtypes", [String, String, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], FinanceController.prototype, "getTopDiscounts", null);
 __decorate([
@@ -220506,7 +220641,7 @@ __decorate([
     __param(1, (0, common_1.Query)()),
     __param(2, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String]),
+    __metadata("design:paramtypes", [String, typeof (_o = typeof dto_1.GetPendingFeesDto !== "undefined" && dto_1.GetPendingFeesDto) === "function" ? _o : Object, String]),
     __metadata("design:returntype", void 0)
 ], FinanceController.prototype, "getPendingFees", null);
 __decorate([
@@ -220706,6 +220841,63 @@ let FinanceService = class FinanceService {
     constructor(prisma) {
         this.prisma = prisma;
     }
+    async resolveAcademicYearIdByRange(schoolId, startDate, endDate) {
+        if (!startDate && !endDate)
+            return undefined;
+        const parsedStart = startDate ? new Date(startDate) : null;
+        const parsedEnd = endDate ? new Date(endDate) : null;
+        if (parsedStart && !Number.isFinite(parsedStart.getTime()))
+            return undefined;
+        if (parsedEnd && !Number.isFinite(parsedEnd.getTime()))
+            return undefined;
+        const start = parsedStart ?? parsedEnd;
+        const end = parsedEnd ?? parsedStart;
+        const from = start <= end ? start : end;
+        const to = start <= end ? end : start;
+        const year = await this.prisma.academicYear.findFirst({
+            where: {
+                schoolId,
+                OR: [
+                    // Input start date falls inside the year.
+                    {
+                        startDate: { lte: from },
+                        endDate: { gte: from },
+                    },
+                    // Input end date falls inside the year.
+                    {
+                        startDate: { lte: to },
+                        endDate: { gte: to },
+                    },
+                    // Year is fully contained inside input range.
+                    {
+                        startDate: { gte: from },
+                        endDate: { lte: to },
+                    },
+                ],
+            },
+            orderBy: { startDate: 'desc' },
+            select: { id: true },
+        });
+        return year?.id;
+    }
+    buildDateWindow(startDate, endDate) {
+        const parsedStart = startDate ? new Date(startDate) : undefined;
+        const parsedEnd = endDate ? new Date(endDate) : undefined;
+        const validStart = parsedStart && Number.isFinite(parsedStart.getTime()) ? parsedStart : undefined;
+        const validEnd = parsedEnd && Number.isFinite(parsedEnd.getTime()) ? parsedEnd : undefined;
+        if (!validStart && !validEnd)
+            return {};
+        if (validStart && validEnd) {
+            const from = validStart <= validEnd ? validStart : validEnd;
+            const to = validStart <= validEnd ? validEnd : validStart;
+            to.setHours(23, 59, 59, 999);
+            return { gte: from, lte: to };
+        }
+        if (validStart)
+            return { gte: validStart };
+        validEnd.setHours(23, 59, 59, 999);
+        return { lte: validEnd };
+    }
     // ═══════════════════════════════════════════════════════════════
     // FEE STRUCTURES
     // ═══════════════════════════════════════════════════════════════
@@ -220825,12 +221017,7 @@ let FinanceService = class FinanceService {
     async findAllInvoices(schoolId, query, campusId) {
         const where = { schoolId };
         if (campusId) {
-            where.student = {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
-            };
+            where.student = { campusId };
         }
         if (query.status)
             where.status = query.status;
@@ -221017,22 +221204,26 @@ let FinanceService = class FinanceService {
     async findAllPayments(schoolId, query, campusId) {
         const where = { schoolId, deletedAt: null };
         if (campusId) {
-            where.student = {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
-            };
+            where.student = { campusId };
         }
-        if (query.startDate || query.endDate) {
-            where.paidAt = {};
-            if (query.startDate)
-                where.paidAt.gte = new Date(query.startDate);
-            if (query.endDate) {
-                const end = new Date(query.endDate);
-                end.setHours(23, 59, 59, 999);
-                where.paidAt.lte = end;
+        const dateWindow = this.buildDateWindow(query.startDate, query.endDate);
+        const resolvedAcademicYearId = query.academicYearId
+            ?? await this.resolveAcademicYearIdByRange(schoolId, query.startDate, query.endDate);
+        if (resolvedAcademicYearId) {
+            if (Object.keys(dateWindow).length > 0) {
+                where.invoice = {
+                    OR: [
+                        { academicYearId: resolvedAcademicYearId },
+                        { dueDate: dateWindow },
+                    ],
+                };
             }
+            else {
+                where.invoice = { academicYearId: resolvedAcademicYearId };
+            }
+        }
+        else if (Object.keys(dateWindow).length > 0) {
+            where.paidAt = dateWindow;
         }
         if (query.method) {
             where.method = query.method;
@@ -221071,22 +221262,26 @@ let FinanceService = class FinanceService {
     async findDeletedPayments(schoolId, query, campusId) {
         const where = { schoolId, deletedAt: { not: null } };
         if (campusId) {
-            where.student = {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
-            };
+            where.student = { campusId };
         }
-        if (query.startDate || query.endDate) {
-            where.paidAt = {};
-            if (query.startDate)
-                where.paidAt.gte = new Date(query.startDate);
-            if (query.endDate) {
-                const end = new Date(query.endDate);
-                end.setHours(23, 59, 59, 999);
-                where.paidAt.lte = end;
+        const dateWindow = this.buildDateWindow(query.startDate, query.endDate);
+        const resolvedAcademicYearId = query.academicYearId
+            ?? await this.resolveAcademicYearIdByRange(schoolId, query.startDate, query.endDate);
+        if (resolvedAcademicYearId) {
+            if (Object.keys(dateWindow).length > 0) {
+                where.invoice = {
+                    OR: [
+                        { academicYearId: resolvedAcademicYearId },
+                        { dueDate: dateWindow },
+                    ],
+                };
             }
+            else {
+                where.invoice = { academicYearId: resolvedAcademicYearId };
+            }
+        }
+        else if (Object.keys(dateWindow).length > 0) {
+            where.paidAt = dateWindow;
         }
         if (query.method) {
             where.method = query.method;
@@ -221163,14 +221358,32 @@ let FinanceService = class FinanceService {
     async getFinanceSummary(schoolId, startDate, endDate, campusId, academicYearId) {
         const where = { schoolId };
         if (campusId) {
-            where.student = {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
-            };
+            where.student = { campusId };
         }
-        if (startDate || endDate) {
+        const effectiveAcademicYearId = academicYearId
+            ?? await this.resolveAcademicYearIdByRange(schoolId, startDate, endDate);
+        const dueDateWindow = {};
+        if (startDate)
+            dueDateWindow.gte = new Date(startDate);
+        if (endDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            dueDateWindow.lte = end;
+        }
+        if (effectiveAcademicYearId) {
+            // Be resilient to legacy records where academicYearId may be missing or stale
+            // but dueDate still falls inside the selected academic session window.
+            if (Object.keys(dueDateWindow).length > 0) {
+                where.OR = [
+                    { academicYearId: effectiveAcademicYearId },
+                    { dueDate: dueDateWindow },
+                ];
+            }
+            else {
+                where.academicYearId = effectiveAcademicYearId;
+            }
+        }
+        else if (startDate || endDate) {
             where.dueDate = {};
             if (startDate)
                 where.dueDate.gte = new Date(startDate);
@@ -221182,7 +221395,7 @@ let FinanceService = class FinanceService {
         }
         // Build campus filter reusable for sub-queries
         const campusFilter = campusId
-            ? { student: { OR: [{ class: { campusId } }, { classId: null }] } }
+            ? { student: { campusId } }
             : {};
         // ── Last Month Pending: invoices in current year whose dueDate falls in
         //    the last fully-ended calendar month ──
@@ -221195,13 +221408,13 @@ let FinanceService = class FinanceService {
             dueDate: { gte: lastMonthStart, lte: lastMonthEnd },
             ...campusFilter,
         };
-        if (academicYearId)
-            lastMonthWhere.academicYearId = academicYearId;
+        if (effectiveAcademicYearId)
+            lastMonthWhere.academicYearId = effectiveAcademicYearId;
         // ── Last Year Pending: all unpaid invoices from the previous academic year ──
         let lastYearWhere = null;
-        if (academicYearId) {
+        if (effectiveAcademicYearId) {
             // Find previous academic year by start date
-            const currentAY = await this.prisma.academicYear.findUnique({ where: { id: academicYearId }, select: { startDate: true } });
+            const currentAY = await this.prisma.academicYear.findUnique({ where: { id: effectiveAcademicYearId }, select: { startDate: true } });
             if (currentAY) {
                 const prevAY = await this.prisma.academicYear.findFirst({
                     where: { schoolId, startDate: { lt: currentAY.startDate } },
@@ -221287,12 +221500,7 @@ let FinanceService = class FinanceService {
         const paymentWhere = { schoolId, paidAt: { gte: start, lte: end } };
         paymentWhere.deletedAt = null;
         if (campusId) {
-            paymentWhere.student = {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
-            };
+            paymentWhere.student = { campusId };
         }
         // Get all payments within the range
         const payments = await this.prisma.feePayment.findMany({
@@ -221335,40 +221543,92 @@ let FinanceService = class FinanceService {
     // ═══════════════════════════════════════════════════════════════
     // MONTHLY FEE COLLECTION CHART
     // ═══════════════════════════════════════════════════════════════
-    async getMonthlyCollection(schoolId, startDate, endDate, campusId) {
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        const campusFilter = campusId ? {
-            student: {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
+    async getMonthlyCollection(schoolId, startDate, endDate, campusId, academicYearId) {
+        let start = new Date(startDate);
+        let end = new Date(endDate);
+        const effectiveAcademicYearId = academicYearId
+            ?? await this.resolveAcademicYearIdByRange(schoolId, startDate, endDate);
+        // If the incoming range is invalid, recover using the academic year range.
+        if (effectiveAcademicYearId && (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()))) {
+            const ay = await this.prisma.academicYear.findFirst({
+                where: { id: effectiveAcademicYearId, schoolId },
+                select: { startDate: true, endDate: true },
+            });
+            if (ay) {
+                start = new Date(ay.startDate);
+                end = new Date(ay.endDate);
             }
-        } : {};
+        }
+        // Hard fallback to avoid returning an empty chart on malformed ranges.
+        if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+            const now = new Date();
+            start = new Date(now.getFullYear(), 0, 1);
+            end = new Date(now.getFullYear(), 11, 31);
+        }
+        if (start > end) {
+            const tmp = start;
+            start = end;
+            end = tmp;
+        }
+        end.setHours(23, 59, 59, 999);
+        const periodStart = new Date(start.getFullYear(), start.getMonth(), 1);
+        const periodEnd = new Date(end.getFullYear(), end.getMonth(), 1);
+        const getMonthKey = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+        const clampToPeriodMonth = (value, fallback) => {
+            if (!Number.isFinite(value.getTime())) {
+                return new Date(fallback);
+            }
+            const monthOnly = new Date(value.getFullYear(), value.getMonth(), 1);
+            if (monthOnly < periodStart)
+                return new Date(periodStart);
+            if (monthOnly > periodEnd)
+                return new Date(periodEnd);
+            return monthOnly;
+        };
+        const campusFilter = campusId ? { student: { campusId } } : {};
+        const invoiceWhere = {
+            schoolId,
+            ...campusFilter,
+        };
+        if (effectiveAcademicYearId) {
+            // Be resilient to legacy records where academicYearId is inconsistent
+            // but dueDate is within the selected session range.
+            invoiceWhere.OR = [
+                { academicYearId: effectiveAcademicYearId },
+                { dueDate: { gte: start, lte: end } },
+            ];
+        }
+        else {
+            invoiceWhere.dueDate = { gte: start, lte: end };
+        }
+        const paymentWhere = {
+            schoolId,
+            deletedAt: null,
+            ...campusFilter,
+        };
+        if (effectiveAcademicYearId) {
+            paymentWhere.invoice = {
+                OR: [
+                    { academicYearId: effectiveAcademicYearId },
+                    { dueDate: { gte: start, lte: end } },
+                ],
+            };
+        }
+        else {
+            paymentWhere.paidAt = { gte: start, lte: end };
+        }
         // Get all invoices within the academic year
         const invoices = await this.prisma.invoice.findMany({
-            where: {
-                schoolId,
-                dueDate: { gte: start, lte: end },
-                ...campusFilter,
-            },
+            where: invoiceWhere,
             select: {
                 totalAmount: true,
-                paidAmount: true,
                 dueDate: true,
-                status: true,
+                createdAt: true,
             },
         });
         // Get all payments within the academic year
         const payments = await this.prisma.feePayment.findMany({
-            where: {
-                schoolId,
-                deletedAt: null,
-                paidAt: { gte: start, lte: end },
-                ...campusFilter,
-            },
+            where: paymentWhere,
             select: {
                 amount: true,
                 paidAt: true,
@@ -221386,38 +221646,48 @@ let FinanceService = class FinanceService {
             },
         });
         // Build monthly buckets
-        const months = [];
-        const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-        const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
-        while (cursor <= endMonth) {
-            const y = cursor.getFullYear();
-            const m = cursor.getMonth();
-            const label = cursor.toLocaleString('en-US', { month: 'short', year: '2-digit' });
-            // Receivable = sum of totalAmount for invoices due in this month
-            const receivable = invoices
-                .filter(inv => {
-                const d = new Date(inv.dueDate);
-                return d.getFullYear() === y && d.getMonth() === m;
-            })
-                .reduce((s, inv) => s + Number(inv.totalAmount), 0);
-            // Collected = sum of payments made in this month
-            const collected = payments
-                .filter(p => {
-                const d = new Date(p.paidAt);
-                return d.getFullYear() === y && d.getMonth() === m;
-            })
-                .reduce((s, p) => s + Number(p.amount), 0);
-            // Expenses = sum of expense amounts in this month
-            const expenseTotal = expenses
-                .filter(e => {
-                const d = new Date(e.date);
-                return d.getFullYear() === y && d.getMonth() === m;
-            })
-                .reduce((s, e) => s + Number(e.amount), 0);
-            months.push({ month: label, receivable, collected, pending: receivable - collected, expenses: expenseTotal });
+        const monthBuckets = new Map();
+        const cursor = new Date(periodStart);
+        while (cursor <= periodEnd) {
+            const key = getMonthKey(cursor);
+            monthBuckets.set(key, {
+                month: cursor.toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+                receivable: 0,
+                collected: 0,
+                expenses: 0,
+            });
             cursor.setMonth(cursor.getMonth() + 1);
         }
-        return months;
+        for (const inv of invoices) {
+            const dueDate = new Date(inv.dueDate);
+            const fallbackDate = new Date(inv.createdAt);
+            const sourceDate = Number.isFinite(dueDate.getTime()) ? dueDate : fallbackDate;
+            const bucketDate = clampToPeriodMonth(sourceDate, periodStart);
+            const bucket = monthBuckets.get(getMonthKey(bucketDate));
+            if (bucket) {
+                bucket.receivable += Number(inv.totalAmount);
+            }
+        }
+        for (const payment of payments) {
+            const paidAt = new Date(payment.paidAt);
+            const bucketDate = clampToPeriodMonth(paidAt, periodStart);
+            const bucket = monthBuckets.get(getMonthKey(bucketDate));
+            if (bucket) {
+                bucket.collected += Number(payment.amount);
+            }
+        }
+        for (const expense of expenses) {
+            const expenseDate = new Date(expense.date);
+            const bucketDate = clampToPeriodMonth(expenseDate, periodStart);
+            const bucket = monthBuckets.get(getMonthKey(bucketDate));
+            if (bucket) {
+                bucket.expenses += Number(expense.amount);
+            }
+        }
+        return Array.from(monthBuckets.values()).map((bucket) => ({
+            ...bucket,
+            pending: bucket.receivable - bucket.collected,
+        }));
     }
     // ═══════════════════════════════════════════════════════════════
     // YEARLY FEE COLLECTION CHART
@@ -221429,14 +221699,7 @@ let FinanceService = class FinanceService {
             orderBy: { startDate: 'asc' },
             select: { name: true, startDate: true, endDate: true },
         });
-        const campusFilter = campusId ? {
-            student: {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
-            }
-        } : {};
+        const campusFilter = campusId ? { student: { campusId } } : {};
         const years = [];
         for (const ay of academicYears) {
             const start = new Date(ay.startDate);
@@ -221444,11 +221707,26 @@ let FinanceService = class FinanceService {
             end.setHours(23, 59, 59, 999);
             const [invoiceAgg, paymentAgg, expenseAgg] = await this.prisma.$transaction([
                 this.prisma.invoice.aggregate({
-                    where: { schoolId, dueDate: { gte: start, lte: end }, ...campusFilter },
+                    where: {
+                        schoolId,
+                        OR: [
+                            { academicYearId: ay.id },
+                            { academicYearId: null, dueDate: { gte: start, lte: end } }
+                        ],
+                        ...campusFilter,
+                    },
                     _sum: { totalAmount: true },
                 }),
                 this.prisma.feePayment.aggregate({
-                    where: { schoolId, deletedAt: null, paidAt: { gte: start, lte: end }, ...campusFilter },
+                    where: {
+                        schoolId,
+                        deletedAt: null,
+                        OR: [
+                            { invoice: { academicYearId: ay.id } },
+                            { invoice: { academicYearId: null }, paidAt: { gte: start, lte: end } }
+                        ],
+                        ...campusFilter,
+                    },
                     _sum: { amount: true },
                 }),
                 this.prisma.expense.aggregate({
@@ -221472,24 +221750,32 @@ let FinanceService = class FinanceService {
     // ═══════════════════════════════════════════════════════════════
     // TOP FEE DEFAULTERS
     // ═══════════════════════════════════════════════════════════════
-    async getTopDefaulters(schoolId, startDate, endDate, limit = 10, campusId) {
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        const campusFilter = campusId ? {
-            student: {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
+    async getTopDefaulters(schoolId, startDate, endDate, limit = 10, campusId, academicYearId) {
+        const dateWindow = this.buildDateWindow(startDate, endDate);
+        const resolvedAcademicYearId = academicYearId
+            ?? await this.resolveAcademicYearIdByRange(schoolId, startDate, endDate);
+        const campusFilter = campusId ? { student: { campusId } } : {};
+        const invoiceScopeFilter = {};
+        if (resolvedAcademicYearId) {
+            if (Object.keys(dateWindow).length > 0) {
+                invoiceScopeFilter.OR = [
+                    { academicYearId: resolvedAcademicYearId },
+                    { dueDate: dateWindow },
+                ];
             }
-        } : {};
+            else {
+                invoiceScopeFilter.academicYearId = resolvedAcademicYearId;
+            }
+        }
+        else if (Object.keys(dateWindow).length > 0) {
+            invoiceScopeFilter.dueDate = dateWindow;
+        }
         // Get unpaid/overdue/partial invoices grouped by student
         const invoices = await this.prisma.invoice.findMany({
             where: {
                 schoolId,
-                dueDate: { gte: start, lte: end },
                 status: { in: ['UNPAID', 'OVERDUE', 'PARTIAL'] },
+                ...invoiceScopeFilter,
                 ...campusFilter,
             },
             select: {
@@ -221531,24 +221817,32 @@ let FinanceService = class FinanceService {
     // ═══════════════════════════════════════════════════════════════
     // TOP DISCOUNTS (students with highest total discounts)
     // ═══════════════════════════════════════════════════════════════
-    async getTopDiscounts(schoolId, startDate, endDate, limit = 10, campusId) {
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        const campusFilter = campusId ? {
-            student: {
-                OR: [
-                    { class: { campusId } },
-                    { classId: null }
-                ]
+    async getTopDiscounts(schoolId, startDate, endDate, limit = 10, campusId, academicYearId) {
+        const dateWindow = this.buildDateWindow(startDate, endDate);
+        const resolvedAcademicYearId = academicYearId
+            ?? await this.resolveAcademicYearIdByRange(schoolId, startDate, endDate);
+        const campusFilter = campusId ? { student: { campusId } } : {};
+        const invoiceScopeFilter = {};
+        if (resolvedAcademicYearId) {
+            if (Object.keys(dateWindow).length > 0) {
+                invoiceScopeFilter.OR = [
+                    { academicYearId: resolvedAcademicYearId },
+                    { dueDate: dateWindow },
+                ];
             }
-        } : {};
+            else {
+                invoiceScopeFilter.academicYearId = resolvedAcademicYearId;
+            }
+        }
+        else if (Object.keys(dateWindow).length > 0) {
+            invoiceScopeFilter.dueDate = dateWindow;
+        }
         // Get invoices that have discounts
         const invoices = await this.prisma.invoice.findMany({
             where: {
                 schoolId,
-                dueDate: { gte: start, lte: end },
                 discountAmount: { gt: 0 },
+                ...invoiceScopeFilter,
                 ...campusFilter,
             },
             select: {
@@ -221613,19 +221907,15 @@ let FinanceService = class FinanceService {
             }
         }
         // Build student filter merging classId, sectionId and campusId
-        const studentFilter = {};
+        const studentFilter = { deletedAt: null };
         if (query.classId)
             studentFilter.classId = query.classId;
         if (query.sectionId)
             studentFilter.sectionId = query.sectionId;
         if (campusId) {
-            studentFilter.OR = [
-                { class: { campusId } },
-                { classId: null }
-            ];
+            studentFilter.campusId = campusId;
         }
-        if (Object.keys(studentFilter).length > 0)
-            where.student = studentFilter;
+        where.student = studentFilter;
         if (query.search) {
             where.OR = [
                 { invoiceNo: { contains: query.search, mode: 'insensitive' } },
@@ -228571,14 +228861,13 @@ exports.StudentsModule = void 0;
 const common_1 = __webpack_require__(47305);
 const students_controller_1 = __webpack_require__(6018);
 const students_service_1 = __webpack_require__(12051);
-const finance_module_1 = __webpack_require__(64460);
 const teachers_module_1 = __webpack_require__(67791);
 let StudentsModule = class StudentsModule {
 };
 exports.StudentsModule = StudentsModule;
 exports.StudentsModule = StudentsModule = __decorate([
     (0, common_1.Module)({
-        imports: [finance_module_1.FinanceModule, teachers_module_1.TeachersModule],
+        imports: [teachers_module_1.TeachersModule],
         controllers: [students_controller_1.StudentsController],
         providers: [students_service_1.StudentsService],
         exports: [students_service_1.StudentsService],
@@ -228635,15 +228924,13 @@ var __importStar = (this && this.__importStar) || (function () {
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var StudentsService_1;
-var _a, _b, _c;
+var _a, _b;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.StudentsService = void 0;
 const common_1 = __webpack_require__(47305);
 const prisma_service_1 = __webpack_require__(29105);
 const dto_1 = __webpack_require__(70549);
 const client_1 = __webpack_require__(98412);
-const finance_cron_service_1 = __webpack_require__(18760);
 const teacher_scope_service_1 = __webpack_require__(49385);
 const XLSX = __importStar(__webpack_require__(42625));
 const ExcelJS = __importStar(__webpack_require__(3085));
@@ -228689,14 +228976,11 @@ const IMPORT_ALLOWED_STATUS = new Set([
     client_1.StudentStatus.SUSPENDED,
     client_1.StudentStatus.LEFT,
 ]);
-let StudentsService = StudentsService_1 = class StudentsService {
+let StudentsService = class StudentsService {
     prisma;
-    financeCronService;
     teacherScope;
-    logger = new common_1.Logger(StudentsService_1.name);
-    constructor(prisma, financeCronService, teacherScope) {
+    constructor(prisma, teacherScope) {
         this.prisma = prisma;
-        this.financeCronService = financeCronService;
         this.teacherScope = teacherScope;
     }
     async resolveEffectiveTeacherId(schoolId, teacherId, requesterUserId) {
@@ -228787,6 +229071,42 @@ let StudentsService = StudentsService_1 = class StudentsService {
             campusId: metadataCampusId,
             campusName: metadataCampusName || 'Unknown campus',
         };
+    }
+    async ensureImportPrerequisites(schoolId, campusId) {
+        const [currentYear, classes] = await Promise.all([
+            this.prisma.academicYear.findFirst({
+                where: { schoolId, isCurrent: true },
+                select: { id: true },
+            }),
+            this.prisma.class.findMany({
+                where: {
+                    schoolId,
+                    campusId,
+                    deletedAt: null,
+                },
+                orderBy: { name: 'asc' },
+                select: {
+                    id: true,
+                    name: true,
+                    sections: {
+                        where: { deletedAt: null },
+                        select: { id: true },
+                    },
+                },
+            }),
+        ]);
+        if (!currentYear) {
+            throw new common_1.BadRequestException('No current academic year found. Create and set an academic year before importing students.');
+        }
+        if (classes.length === 0) {
+            throw new common_1.BadRequestException('No classes found in the selected campus. Create classes before importing students.');
+        }
+        const classesWithoutSections = classes
+            .filter((item) => item.sections.length === 0)
+            .map((item) => item.name);
+        if (classesWithoutSections.length > 0) {
+            throw new common_1.BadRequestException(`Create at least one section for each class before importing students. Missing sections: ${classesWithoutSections.join(', ')}`);
+        }
     }
     async parseStudentImportWorkbook(schoolId, campusId, fileBuffer) {
         let workbook;
@@ -229006,6 +229326,7 @@ let StudentsService = StudentsService_1 = class StudentsService {
         if (!campus) {
             throw new common_1.BadRequestException('Selected campus was not found for this school');
         }
+        await this.ensureImportPrerequisites(schoolId, campusId);
         const classes = await this.prisma.class.findMany({
             where: { schoolId, campusId, deletedAt: null },
             orderBy: { name: 'asc' },
@@ -229149,6 +229470,7 @@ let StudentsService = StudentsService_1 = class StudentsService {
         if (!campusId) {
             throw new common_1.BadRequestException('Select a campus before importing students');
         }
+        await this.ensureImportPrerequisites(schoolId, campusId);
         const { preview } = await this.parseStudentImportWorkbook(schoolId, campusId, fileBuffer);
         return preview;
     }
@@ -229156,6 +229478,7 @@ let StudentsService = StudentsService_1 = class StudentsService {
         if (!campusId) {
             throw new common_1.BadRequestException('Select a campus before importing students');
         }
+        await this.ensureImportPrerequisites(schoolId, campusId);
         const { rows, preview } = await this.parseStudentImportWorkbook(schoolId, campusId, fileBuffer);
         const runtimeErrors = [...preview.errors];
         let imported = 0;
@@ -229382,13 +229705,6 @@ let StudentsService = StudentsService_1 = class StudentsService {
             }
             return student;
         });
-        // Auto-generate initial invoices for the newly enrolled student
-        try {
-            await this.financeCronService.generateInvoicesForNewStudent(result.id, schoolId, result.classId ?? undefined);
-        }
-        catch (err) {
-            this.logger.warn(`Failed to auto-generate invoices for new student ${result.id}: ${err}`);
-        }
         return result;
     }
     async findAll(schoolId, query, campusId, teacherId, requesterUserId) {
@@ -229703,10 +230019,32 @@ let StudentsService = StudentsService_1 = class StudentsService {
     }
     async remove(id, schoolId, campusId, teacherId, requesterUserId) {
         await this.findById(id, schoolId, campusId, teacherId, requesterUserId);
-        // Soft delete
-        return this.prisma.student.update({
-            where: { id },
-            data: { deletedAt: new Date() },
+        return this.prisma.$transaction(async (tx) => {
+            // Preserve payment history by cancelling partial invoices before student deletion.
+            await tx.invoice.updateMany({
+                where: {
+                    schoolId,
+                    studentId: id,
+                    status: client_1.InvoiceStatus.PARTIAL,
+                },
+                data: {
+                    status: client_1.InvoiceStatus.CANCELLED,
+                },
+            });
+            // Remove unpaid and overdue vouchers on delete.
+            await tx.invoice.deleteMany({
+                where: {
+                    schoolId,
+                    studentId: id,
+                    status: {
+                        in: [client_1.InvoiceStatus.UNPAID, client_1.InvoiceStatus.OVERDUE],
+                    },
+                },
+            });
+            return tx.student.update({
+                where: { id },
+                data: { deletedAt: new Date() },
+            });
         });
     }
     async restore(id, schoolId, campusId, teacherId, requesterUserId) {
@@ -229950,9 +230288,9 @@ let StudentsService = StudentsService_1 = class StudentsService {
     }
 };
 exports.StudentsService = StudentsService;
-exports.StudentsService = StudentsService = StudentsService_1 = __decorate([
+exports.StudentsService = StudentsService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof finance_cron_service_1.FinanceCronService !== "undefined" && finance_cron_service_1.FinanceCronService) === "function" ? _b : Object, typeof (_c = typeof teacher_scope_service_1.TeacherScopeService !== "undefined" && teacher_scope_service_1.TeacherScopeService) === "function" ? _c : Object])
+    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof teacher_scope_service_1.TeacherScopeService !== "undefined" && teacher_scope_service_1.TeacherScopeService) === "function" ? _b : Object])
 ], StudentsService);
 
 

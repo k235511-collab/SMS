@@ -79,7 +79,7 @@ export class AnalyticsService {
                 where: { schoolId, campusId, deletedAt: null },
                 select: { id: true }
             })
-            campusClassIds = campusClasses.map(c => c.id)
+            campusClassIds = campusClasses.map((c: any) => c.id)
             hasNoClassesInCampus = campusClassIds.length === 0
         }
 
@@ -238,7 +238,7 @@ export class AnalyticsService {
         const sectionAttendance: Record<string, { present: number; absent: number; late: number; leave: number }> = {}
         let totalPresent = 0, totalAbsent = 0, totalLate = 0, totalLeave = 0
 
-        todayAttendance.forEach((att) => {
+        todayAttendance.forEach((att: any) => {
             const secKey = att.sectionId ?? 'unassigned'
             if (!sectionAttendance[secKey]) {
                 sectionAttendance[secKey] = { present: 0, absent: 0, late: 0, leave: 0 }
@@ -253,14 +253,14 @@ export class AnalyticsService {
         })
 
         // ── Build full class → sections structure with attendance merged in ──
-        const attendanceByClass = allClasses.map((cls) => {
-            const sections = cls.sections.map((sec) => {
+        const attendanceByClass = allClasses.map((cls: any) => {
+            const sections = cls.sections.map((sec: any) => {
                 const att = sectionAttendance[sec.id] ?? { present: 0, absent: 0, late: 0, leave: 0 }
                 return { sectionName: sec.name, ...att }
             })
             // Class-level totals = sum of all its sections
             const classTotals = sections.reduce(
-                (acc, s) => ({
+                (acc: any, s: any) => ({
                     present: acc.present + s.present,
                     absent: acc.absent + s.absent,
                     late: acc.late + s.late,
@@ -277,7 +277,7 @@ export class AnalyticsService {
         const arrearsTotal = (arrearsAll._sum?.totalAmount ?? 0) - (arrearsAll._sum?.paidAmount ?? 0)
         const yearlyReceived = yearlyCollection._sum?.amount ?? 0
         const yearlyInvoiced = (pendingFeeAll._sum?.totalAmount ?? 0) + (yearlyReceived > 0 ? yearlyReceived : 0)
-        const totalSections = allClasses.reduce((sum, cls) => sum + cls.sections.length, 0)
+        const totalSections = allClasses.reduce((sum: number, cls: any) => sum + cls.sections.length, 0)
 
         return {
             people: {
@@ -352,7 +352,7 @@ export class AnalyticsService {
         })
 
         const dateMap = new Map<string, Record<string, number>>()
-        attendance.forEach(a => {
+        attendance.forEach((a: any) => {
             const dateKey = a.date.toISOString().split('T')[0]
             if (!dateMap.has(dateKey)) dateMap.set(dateKey, {})
             dateMap.get(dateKey)![a.status] = a._count.status
@@ -378,7 +378,7 @@ export class AnalyticsService {
             { label: 'F (<60%)', min: 0, max: 59, count: 0 },
         ]
 
-        grades.forEach(g => {
+        grades.forEach((g: any) => {
             const pct = (g.score / g.maxScore) * 100
             const range = ranges.find(r => pct >= r.min && pct <= r.max)
             if (range) range.count++

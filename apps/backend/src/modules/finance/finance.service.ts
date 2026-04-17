@@ -320,7 +320,7 @@ export class FinanceService {
   }
 
   async restorePayment(id: string, schoolId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: any) => {
       const payment = await tx.feePayment.findFirst({
         where: { id, schoolId, deletedAt: { not: null } },
         include: {
@@ -380,7 +380,7 @@ export class FinanceService {
 
   async recordPayment(schoolId: string, dto: RecordPaymentDto) {
     // Use interactive transaction with row-level locking to prevent race conditions
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: any) => {
       // Lock the invoice row with FOR UPDATE to prevent concurrent overpayment
       const invoiceRows = await tx.$queryRaw<any[]>`
         SELECT * FROM invoices
@@ -567,7 +567,7 @@ export class FinanceService {
   }
 
   async softDeletePayment(id: string, schoolId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: any) => {
       const payment = await tx.feePayment.findFirst({
         where: { id, schoolId, deletedAt: null },
         include: {
@@ -793,18 +793,18 @@ export class FinanceService {
       const label = cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
       const collected = payments
-        .filter(p => {
+        .filter((p: any) => {
           const pd = new Date(p.paidAt)
           return pd.getFullYear() === y && pd.getMonth() === m && pd.getDate() === d
         })
-        .reduce((s, p) => s + Number(p.amount), 0)
+        .reduce((s: number, p: any) => s + Number(p.amount), 0)
 
       const expenseTotal = expenses
-        .filter(e => {
+        .filter((e: any) => {
           const ed = new Date(e.date)
           return ed.getFullYear() === y && ed.getMonth() === m && ed.getDate() === d
         })
-        .reduce((s, e) => s + Number(e.amount), 0)
+        .reduce((s: number, e: any) => s + Number(e.amount), 0)
 
       days.push({ day: label, collected, expenses: expenseTotal })
       cursor.setDate(cursor.getDate() + 1)
@@ -991,7 +991,7 @@ export class FinanceService {
     const academicYears = await this.prisma.academicYear.findMany({
       where: { schoolId },
       orderBy: { startDate: 'asc' },
-      select: { name: true, startDate: true, endDate: true },
+      select: { id: true, name: true, startDate: true, endDate: true },
     })
 
     const campusFilter = campusId ? { student: { campusId } } : {}
@@ -1343,7 +1343,7 @@ export class FinanceService {
   async seedDefaultCategories(schoolId: string) {
     const defaults = ['Salaries', 'Utilities', 'Rent', 'Maintenance', 'Transport', 'Stationery', 'Equipment', 'Miscellaneous']
     const existing = await this.prisma.expenseCategory.findMany({ where: { schoolId }, select: { name: true } })
-    const existingNames = new Set(existing.map(c => c.name))
+    const existingNames = new Set(existing.map((c: any) => c.name))
     const toCreate = defaults.filter(n => !existingNames.has(n))
     if (toCreate.length === 0) return []
     await this.prisma.expenseCategory.createMany({

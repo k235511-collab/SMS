@@ -146,7 +146,7 @@ export const tenantIsolationExtension = Prisma.defineExtension({
   name: 'tenant-isolation',
   query: {
     $allModels: {
-      async $allOperations({ model, operation, args, query }) {
+      async $allOperations({ model, operation, args, query }: { model?: string, operation: string, args: any, query: (args: any) => Promise<any> }) {
         // 1. Skip non-tenant models
         if (!model || !TENANT_MODELS.has(model)) {
           return query(args)
