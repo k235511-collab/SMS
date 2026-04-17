@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common'
+import { Injectable, NotFoundException, ConflictException, BadRequestException, PreconditionFailedException } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import { PaginationDto, PaginatedResult } from '../../common/dto'
 import { CreateAcademicYearDto, UpdateAcademicYearDto } from './dto'
@@ -128,6 +128,24 @@ export class AcademicYearsService {
 
   async remove(id: string, schoolId: string) {
     await this.findById(id, schoolId)
+
+    // Check for dependencies
+    const [enrollments, invoices, exams, timetable, assignments] = await Promise.all([
+      this.prisma.studentEnrollment.count({ where: { academicYearId: id } }),
+      this.prisma.invoice.count({ where: { academicYearId: id } }),
+      this.prisma.exam.count({ where: { academicYearId: id } }),
+      this.prisma.timetableSlot.count({ where: { academicYearId: id } }),
+      this.prisma.teacherClassAssignment.count({ where: { academicYearId: id } }),
+    ])
+
+    const totalDependencies = enrollments + invoices + exams + timetable + assignments
+
+    if (totalDependencies > 0) {
+      throw new PreconditionFailedException(
+        `Cannot delete academic year: ${enrollments} students, ${invoices} invoices, ${exams} exams, ${timetable} timetable slots, and ${assignments} teacher assignments are linked to it.`,
+      )
+    }
+
     return this.prisma.academicYear.delete({ where: { id } })
   }
 
