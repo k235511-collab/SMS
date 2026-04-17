@@ -211897,6 +211897,18 @@ let AcademicYearsService = class AcademicYearsService {
     }
     async remove(id, schoolId) {
         await this.findById(id, schoolId);
+        // Check for dependencies
+        const [enrollments, invoices, exams, timetable, assignments] = await Promise.all([
+            this.prisma.studentEnrollment.count({ where: { academicYearId: id } }),
+            this.prisma.invoice.count({ where: { academicYearId: id } }),
+            this.prisma.exam.count({ where: { academicYearId: id } }),
+            this.prisma.timetableSlot.count({ where: { academicYearId: id } }),
+            this.prisma.teacherClassAssignment.count({ where: { academicYearId: id } }),
+        ]);
+        const totalDependencies = enrollments + invoices + exams + timetable + assignments;
+        if (totalDependencies > 0) {
+            throw new common_1.PreconditionFailedException(`Cannot delete academic year: ${enrollments} students, ${invoices} invoices, ${exams} exams, ${timetable} timetable slots, and ${assignments} teacher assignments are linked to it.`);
+        }
         return this.prisma.academicYear.delete({ where: { id } });
     }
     async getCurrent(schoolId) {
@@ -213164,7 +213176,7 @@ let AnalyticsService = class AnalyticsService {
                 where: { schoolId, campusId, deletedAt: null },
                 select: { id: true }
             });
-            campusClassIds = campusClasses.map(c => c.id);
+            campusClassIds = campusClasses.map((c) => c.id);
             hasNoClassesInCampus = campusClassIds.length === 0;
         }
         const subjectWhere = {
@@ -213430,7 +213442,7 @@ let AnalyticsService = class AnalyticsService {
             orderBy: { date: 'asc' },
         });
         const dateMap = new Map();
-        attendance.forEach(a => {
+        attendance.forEach((a) => {
             const dateKey = a.date.toISOString().split('T')[0];
             if (!dateMap.has(dateKey))
                 dateMap.set(dateKey, {});
@@ -213453,7 +213465,7 @@ let AnalyticsService = class AnalyticsService {
             { label: 'D (60-69%)', min: 60, max: 69, count: 0 },
             { label: 'F (<60%)', min: 0, max: 59, count: 0 },
         ];
-        grades.forEach(g => {
+        grades.forEach((g) => {
             const pct = (g.score / g.maxScore) * 100;
             const range = ranges.find(r => pct >= r.min && pct <= r.max);
             if (range)
@@ -221524,13 +221536,13 @@ let FinanceService = class FinanceService {
             const d = cursor.getDate();
             const label = cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             const collected = payments
-                .filter(p => {
+                .filter((p) => {
                 const pd = new Date(p.paidAt);
                 return pd.getFullYear() === y && pd.getMonth() === m && pd.getDate() === d;
             })
                 .reduce((s, p) => s + Number(p.amount), 0);
             const expenseTotal = expenses
-                .filter(e => {
+                .filter((e) => {
                 const ed = new Date(e.date);
                 return ed.getFullYear() === y && ed.getMonth() === m && ed.getDate() === d;
             })
@@ -221697,7 +221709,7 @@ let FinanceService = class FinanceService {
         const academicYears = await this.prisma.academicYear.findMany({
             where: { schoolId },
             orderBy: { startDate: 'asc' },
-            select: { name: true, startDate: true, endDate: true },
+            select: { id: true, name: true, startDate: true, endDate: true },
         });
         const campusFilter = campusId ? { student: { campusId } } : {};
         const years = [];
@@ -222004,7 +222016,7 @@ let FinanceService = class FinanceService {
     async seedDefaultCategories(schoolId) {
         const defaults = ['Salaries', 'Utilities', 'Rent', 'Maintenance', 'Transport', 'Stationery', 'Equipment', 'Miscellaneous'];
         const existing = await this.prisma.expenseCategory.findMany({ where: { schoolId }, select: { name: true } });
-        const existingNames = new Set(existing.map(c => c.name));
+        const existingNames = new Set(existing.map((c) => c.name));
         const toCreate = defaults.filter(n => !existingNames.has(n));
         if (toCreate.length === 0)
             return [];
@@ -228953,13 +228965,23 @@ const STUDENT_TEMPLATE_COLUMNS = [
     'Religion',
     'Admission Note',
 ];
+const STUDENT_IMPORT_COLUMN_ALIASES = {
+    'Class Section': ['Class & Section', 'Class-Section'],
+    'Date Of Birth': ['Date of Birth', 'DOB'],
+    'Blood Group': ['BloodGroup'],
+};
+const STUDENT_IMPORT_LEGACY_CLASS_COLUMNS = {
+    className: 'Class Name',
+    classCode: 'Class Code',
+    sectionName: 'Section Name',
+};
 const STUDENT_IMPORT_REQUIRED_COLUMNS = [
     'Roll Number',
     'First Name',
     'Last Name',
     'Class Section',
 ];
-const STUDENT_IMPORT_TEMPLATE_VERSION = '2.0';
+const STUDENT_IMPORT_TEMPLATE_VERSION = '2';
 const STUDENT_IMPORT_METADATA_KEYS = {
     templateVersion: 'Template Version',
     schoolId: 'School ID',
@@ -229009,12 +229031,21 @@ let StudentsService = class StudentsService {
     }
     normalizeLookup(value) {
         return String(value ?? '')
-            .trim()
             .toLowerCase()
-            .replace(/\s+/g, ' ');
+            .replace(/[^\w\s|()]/g, '') // Remove special characters except alphanumeric, space, pipe, and parentheses
+            .replace(/\s+/g, ' ')
+            .trim();
     }
     toStringValue(value) {
         return String(value ?? '').trim();
+    }
+    findHeaderIndex(normalizedFileHeaders, candidates) {
+        for (const candidate of candidates) {
+            const index = normalizedFileHeaders.indexOf(this.normalizeLookup(candidate));
+            if (index !== -1)
+                return index;
+        }
+        return -1;
     }
     parseImportDate(value) {
         if (value == null || value === '') {
@@ -229045,7 +229076,7 @@ let StudentsService = class StudentsService {
     readImportMetadata(workbook) {
         const metadataSheet = workbook.Sheets['Metadata'];
         if (!metadataSheet) {
-            throw new common_1.BadRequestException('Metadata sheet is missing. Please download and use the latest import template.');
+            return { isLegacy: true };
         }
         const metadataRows = XLSX.utils.sheet_to_json(metadataSheet, {
             defval: '',
@@ -229063,9 +229094,10 @@ let StudentsService = class StudentsService {
         const metadataCampusId = metadata.get(STUDENT_IMPORT_METADATA_KEYS.campusId);
         const metadataCampusName = metadata.get(STUDENT_IMPORT_METADATA_KEYS.campusName);
         if (!templateVersion || !metadataSchoolId || !metadataCampusId) {
-            throw new common_1.BadRequestException('Template metadata is incomplete. Please download a fresh template and try again.');
+            return { isLegacy: true };
         }
         return {
+            isLegacy: false,
             templateVersion,
             schoolId: metadataSchoolId,
             campusId: metadataCampusId,
@@ -229117,14 +229149,18 @@ let StudentsService = class StudentsService {
             throw new common_1.BadRequestException('Invalid Excel file. Please upload a valid .xlsx file.');
         }
         const metadata = this.readImportMetadata(workbook);
-        if (metadata.templateVersion !== STUDENT_IMPORT_TEMPLATE_VERSION) {
-            throw new common_1.BadRequestException(`Unsupported template version "${metadata.templateVersion}". Please download the latest template (v${STUDENT_IMPORT_TEMPLATE_VERSION}).`);
-        }
-        if (metadata.schoolId !== schoolId) {
-            throw new common_1.BadRequestException('This template belongs to a different school. Please download a fresh template from your account.');
-        }
-        if (metadata.campusId !== campusId) {
-            throw new common_1.BadRequestException(`Template campus mismatch. Template is for "${metadata.campusName}" but current campus is different.`);
+        if (!metadata.isLegacy) {
+            const currentVersion = STUDENT_IMPORT_TEMPLATE_VERSION.replace(/\.0$/, '');
+            const fileVersion = metadata.templateVersion.replace(/\.0$/, '');
+            if (fileVersion !== currentVersion) {
+                throw new common_1.BadRequestException(`Unsupported template version "${metadata.templateVersion}". Please download the latest template (v${STUDENT_IMPORT_TEMPLATE_VERSION}).`);
+            }
+            if (metadata.schoolId !== schoolId) {
+                throw new common_1.BadRequestException('This template belongs to a different school. Please download a fresh template from your account.');
+            }
+            if (metadata.campusId !== campusId) {
+                throw new common_1.BadRequestException(`Template campus mismatch. Template is for "${metadata.campusName}" but current campus is different.`);
+            }
         }
         const sheet = workbook.Sheets['Students'];
         if (!sheet) {
@@ -229135,32 +229171,76 @@ let StudentsService = class StudentsService {
             defval: '',
             raw: false,
         });
-        const headerRow = Array.isArray(sheetRows[0]) ? sheetRows[0] : [];
-        const normalizedHeaders = new Set(headerRow.map((cell) => this.normalizeLookup(cell)));
-        const missingHeaders = STUDENT_TEMPLATE_COLUMNS.filter((column) => !normalizedHeaders.has(this.normalizeLookup(column)));
-        if (missingHeaders.length > 0) {
-            throw new common_1.BadRequestException(`Invalid template columns. Missing: ${missingHeaders.join(', ')}. Please download and use the latest template.`);
+        const headerRow = (sheetRows[0] || []);
+        const normalizedFileHeaders = headerRow.map((h) => this.normalizeLookup(h));
+        const columnMap = new Map();
+        STUDENT_TEMPLATE_COLUMNS.forEach((col) => {
+            const aliases = STUDENT_IMPORT_COLUMN_ALIASES[col] || [];
+            const index = this.findHeaderIndex(normalizedFileHeaders, [col, ...aliases]);
+            if (index !== -1) {
+                columnMap.set(col, index);
+            }
+        });
+        const legacyClassNameIndex = this.findHeaderIndex(normalizedFileHeaders, [STUDENT_IMPORT_LEGACY_CLASS_COLUMNS.className]);
+        const legacyClassCodeIndex = this.findHeaderIndex(normalizedFileHeaders, [STUDENT_IMPORT_LEGACY_CLASS_COLUMNS.classCode]);
+        const legacySectionNameIndex = this.findHeaderIndex(normalizedFileHeaders, [STUDENT_IMPORT_LEGACY_CLASS_COLUMNS.sectionName]);
+        const canComposeClassSection = !columnMap.has('Class Section')
+            && legacyClassNameIndex !== -1
+            && legacySectionNameIndex !== -1;
+        const missingRequiredHeaders = STUDENT_IMPORT_REQUIRED_COLUMNS.filter((requiredColumn) => {
+            if (requiredColumn === 'Class Section' && canComposeClassSection) {
+                return false;
+            }
+            return !columnMap.has(requiredColumn);
+        });
+        if (missingRequiredHeaders.length > 0) {
+            throw new common_1.BadRequestException(`Invalid template columns. Missing required: ${missingRequiredHeaders.join(', ')}. Please download and use the latest template.`);
         }
-        const rawRows = XLSX.utils.sheet_to_json(sheet, {
-            defval: '',
-            raw: false,
+        const dataRows = sheetRows.slice(1);
+        const nonEmptyRows = dataRows.filter((row) => Array.isArray(row) && row.some((cell) => String(cell ?? '').trim() !== ''));
+        const rowPayloads = nonEmptyRows.map((row, index) => {
+            const values = {};
+            STUDENT_TEMPLATE_COLUMNS.forEach((col) => {
+                if (col === 'Class Section' && !columnMap.has(col) && canComposeClassSection) {
+                    const className = this.toStringValue(row[legacyClassNameIndex]);
+                    const sectionName = this.toStringValue(row[legacySectionNameIndex]);
+                    const classCode = legacyClassCodeIndex !== -1 ? this.toStringValue(row[legacyClassCodeIndex]) : '';
+                    values[col] =
+                        className && sectionName
+                            ? this.buildClassSectionLabel(className, sectionName, classCode || undefined)
+                            : '';
+                    return;
+                }
+                const colIdx = columnMap.get(col);
+                values[col] = this.toStringValue(colIdx !== undefined ? row[colIdx] : '');
+            });
+            return {
+                rowNumber: index + 2,
+                values,
+            };
         });
-        const classes = await this.prisma.class.findMany({
-            where: {
-                schoolId,
-                deletedAt: null,
-                campusId,
-            },
-            select: {
-                id: true,
-                name: true,
-                code: true,
-                sections: {
-                    where: { deletedAt: null },
-                    select: { id: true, name: true },
+        const [classes, existingRolls] = await Promise.all([
+            this.prisma.class.findMany({
+                where: {
+                    schoolId,
+                    deletedAt: null,
+                    campusId,
                 },
-            },
-        });
+                select: {
+                    id: true,
+                    name: true,
+                    code: true,
+                    sections: {
+                        where: { deletedAt: null },
+                        select: { id: true, name: true },
+                    },
+                },
+            }),
+            this.prisma.student.findMany({
+                where: { schoolId, campusId, deletedAt: null },
+                select: { rollNumber: true },
+            }),
+        ]);
         if (classes.length === 0) {
             throw new common_1.BadRequestException('No classes found for the selected campus. Create classes before importing students.');
         }
@@ -229185,26 +229265,9 @@ let StudentsService = class StudentsService {
         });
         const errors = [];
         const rows = [];
-        const seenRollNumbers = new Map();
-        const rowPayloads = rawRows.map((raw, index) => ({
-            rowNumber: index + 2,
-            values: Object.fromEntries(STUDENT_TEMPLATE_COLUMNS.map((column) => [column, this.toStringValue(raw[column])])),
-        }));
-        const nonEmptyPayloads = rowPayloads.filter((item) => Object.values(item.values).some((value) => value !== ''));
-        const rollNumbersToCheck = Array.from(new Set(nonEmptyPayloads
-            .map((item) => item.values['Roll Number'])
-            .filter((value) => value.length > 0)));
-        const existingRolls = await this.prisma.student.findMany({
-            where: {
-                schoolId,
-                campusId,
-                deletedAt: null,
-                rollNumber: { in: rollNumbersToCheck },
-            },
-            select: { rollNumber: true },
-        });
         const existingRollSet = new Set(existingRolls.map((row) => row.rollNumber.toLowerCase()));
-        for (const payload of nonEmptyPayloads) {
+        const seenRollNumbers = new Map();
+        for (const payload of rowPayloads) {
             const { rowNumber, values } = payload;
             const rollNumber = values['Roll Number'];
             const firstName = values['First Name'];
@@ -229298,7 +229361,7 @@ let StudentsService = class StudentsService {
         }
         const preview = {
             summary: {
-                totalRows: nonEmptyPayloads.length,
+                totalRows: rowPayloads.length,
                 validRows: rows.length,
                 invalidRows: errors.length > 0 ? new Set(errors.map((error) => error.rowNumber)).size : 0,
             },
@@ -229524,17 +229587,19 @@ let StudentsService = class StudentsService {
         if (effectiveTeacherId) {
             const classIds = await this.getTeacherClassFilter(effectiveTeacherId, schoolId);
             if (!classIds || classIds.length === 0) {
-                const emptyWb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(emptyWb, XLSX.utils.json_to_sheet([]), 'Students');
-                XLSX.utils.book_append_sheet(emptyWb, XLSX.utils.json_to_sheet([
-                    { Key: 'Template Version', Value: STUDENT_IMPORT_TEMPLATE_VERSION },
-                    { Key: 'Exported At', Value: new Date().toISOString() },
-                    { Key: 'School ID', Value: schoolId },
-                    { Key: 'Campus ID', Value: campus.id },
-                    { Key: 'Campus Name', Value: campus.name },
-                    { Key: 'Total Rows', Value: 0 },
-                ]), 'Metadata');
-                return XLSX.write(emptyWb, { type: 'buffer', bookType: 'xlsx' });
+                const workbook = new ExcelJS.Workbook();
+                workbook.addWorksheet('Students').addRow([...STUDENT_TEMPLATE_COLUMNS]);
+                const metadataSheet = workbook.addWorksheet('Metadata');
+                metadataSheet.addRow(['Key', 'Value']);
+                metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.templateVersion, STUDENT_IMPORT_TEMPLATE_VERSION]);
+                metadataSheet.addRow(['Exported At', new Date().toISOString()]);
+                metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.schoolId, schoolId]);
+                metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusId, campus.id]);
+                metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusName, campus.name]);
+                metadataSheet.addRow(['Total Rows', 0]);
+                metadataSheet.state = 'veryHidden';
+                const buffer = await workbook.xlsx.writeBuffer();
+                return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
             }
             andWhere.push({ classId: { in: classIds } });
         }
@@ -229585,37 +229650,41 @@ let StudentsService = class StudentsService {
                 'Roll Number': student.rollNumber,
                 'First Name': student.firstName,
                 'Last Name': student.lastName,
+                'Class Section': this.buildClassSectionLabel(student.class?.name || '', student.section?.name || '', student.class?.code),
                 Gender: student.gender || '',
-                Status: student.status,
                 'Date Of Birth': student.dateOfBirth ? new Date(student.dateOfBirth).toISOString().slice(0, 10) : '',
-                'Class Name': student.class?.name || '',
-                'Class Code': student.class?.code || '',
-                'Section Name': student.section?.name || '',
+                'Blood Group': student.bloodGroup || '',
                 'Guardian Name': student.guardianName || (parent ? `${parent.firstName} ${parent.lastName}` : ''),
                 'Guardian Phone': student.guardianPhone || parent?.phone || '',
                 'Guardian Email': student.guardianEmail || '',
-                Phone: student.phone || '',
-                CNIC: student.cnic || '',
                 Address: student.address || '',
+                Status: student.status,
+                CNIC: student.cnic || '',
+                Phone: student.phone || '',
                 Group: student.group || '',
                 Religion: student.religion || '',
                 'Admission Note': student.admissionNote || '',
-                Campus: student.class?.campus?.name || '',
             };
         });
-        const workbook = XLSX.utils.book_new();
-        const studentSheet = XLSX.utils.json_to_sheet(rows);
-        XLSX.utils.book_append_sheet(workbook, studentSheet, 'Students');
-        const metadataSheet = XLSX.utils.json_to_sheet([
-            { Key: 'Template Version', Value: STUDENT_IMPORT_TEMPLATE_VERSION },
-            { Key: 'Exported At', Value: new Date().toISOString() },
-            { Key: 'School ID', Value: schoolId },
-            { Key: 'Campus ID', Value: campus.id },
-            { Key: 'Campus Name', Value: campus.name },
-            { Key: 'Total Rows', Value: rows.length },
-        ]);
-        XLSX.utils.book_append_sheet(workbook, metadataSheet, 'Metadata');
-        return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('Students');
+        const metadataSheet = workbook.addWorksheet('Metadata');
+        const headers = [...STUDENT_TEMPLATE_COLUMNS];
+        sheet.addRow(headers);
+        rows.forEach((row) => {
+            const rowData = headers.map((h) => row[h]);
+            sheet.addRow(rowData);
+        });
+        metadataSheet.addRow(['Key', 'Value']);
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.templateVersion, STUDENT_IMPORT_TEMPLATE_VERSION]);
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.generatedAt, new Date().toISOString()]);
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.schoolId, schoolId]);
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusId, campus.id]);
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusName, campus.name]);
+        metadataSheet.addRow(['Total Rows', rows.length]);
+        metadataSheet.state = 'veryHidden';
+        const buffer = await workbook.xlsx.writeBuffer();
+        return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
     }
     async create(schoolId, dto, campusId) {
         if (!campusId) {
@@ -229786,7 +229855,7 @@ let StudentsService = class StudentsService {
             }),
             this.prisma.student.count({ where }),
         ]);
-        let students = data.map(s => {
+        let students = data.map((s) => {
             const balance = s.invoices.reduce((acc, inv) => acc + (inv.totalAmount - inv.paidAmount), 0);
             return { ...s, balance };
         });
@@ -229797,7 +229866,7 @@ let StudentsService = class StudentsService {
         if (query.balanceMin !== undefined || query.balanceMax !== undefined) {
             const bMin = query.balanceMin ? parseFloat(query.balanceMin) : -Infinity;
             const bMax = query.balanceMax ? parseFloat(query.balanceMax) : Infinity;
-            students = students.filter(s => s.balance >= bMin && s.balance <= bMax);
+            students = students.filter((s) => s.balance >= bMin && s.balance <= bMax);
         }
         return new dto_1.PaginatedResult(students, total, query.page ?? 1, query.pageSize ?? 20);
     }
@@ -230155,6 +230224,9 @@ let StudentsService = class StudentsService {
                 schoolId,
                 studentId: { in: studentIds },
                 status: { in: ['UNPAID', 'PARTIAL', 'OVERDUE'] },
+                student: {
+                    status: { not: client_1.StudentStatus.LEFT },
+                },
             },
             select: {
                 studentId: true,
@@ -230216,6 +230288,7 @@ let StudentsService = class StudentsService {
                 id: { in: dto.studentIds },
                 schoolId,
                 deletedAt: null,
+                status: { not: client_1.StudentStatus.LEFT },
             },
             include: {
                 enrollments: {
@@ -230254,7 +230327,8 @@ let StudentsService = class StudentsService {
                 const mapping = classMap.get(sourceClassId);
                 if (!mapping) {
                     skipped++;
-                    errors.push(`No class mapping found for ${student.firstName} ${student.lastName}`);
+                    const classRecord = await tx.class.findUnique({ where: { id: sourceClassId }, select: { name: true } });
+                    errors.push(`No class mapping found for ${student.firstName} ${student.lastName} (Current Class: ${classRecord?.name || 'Unknown'})`);
                     continue;
                 }
                 // Create enrollment in target year
