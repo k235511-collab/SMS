@@ -1525,6 +1525,9 @@ export class StudentsService {
         schoolId,
         studentId: { in: studentIds },
         status: { in: ['UNPAID', 'PARTIAL', 'OVERDUE'] },
+        student: {
+          status: { not: StudentStatus.LEFT },
+        },
       },
       select: {
         studentId: true,
@@ -1592,6 +1595,7 @@ export class StudentsService {
         id: { in: dto.studentIds },
         schoolId,
         deletedAt: null,
+        status: { not: StudentStatus.LEFT },
       },
       include: {
         enrollments: {
@@ -1636,7 +1640,8 @@ export class StudentsService {
         const mapping = classMap.get(sourceClassId)
         if (!mapping) {
           skipped++
-          errors.push(`No class mapping found for ${student.firstName} ${student.lastName}`)
+          const classRecord = await tx.class.findUnique({ where: { id: sourceClassId }, select: { name: true } })
+          errors.push(`No class mapping found for ${student.firstName} ${student.lastName} (Current Class: ${classRecord?.name || 'Unknown'})`)
           continue
         }
 
