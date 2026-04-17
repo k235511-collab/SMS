@@ -68,6 +68,28 @@ export class FinanceService {
     return year?.id
   }
 
+  private buildDateWindow(startDate?: string, endDate?: string): { gte?: Date; lte?: Date } {
+    const parsedStart = startDate ? new Date(startDate) : undefined
+    const parsedEnd = endDate ? new Date(endDate) : undefined
+
+    const validStart = parsedStart && Number.isFinite(parsedStart.getTime()) ? parsedStart : undefined
+    const validEnd = parsedEnd && Number.isFinite(parsedEnd.getTime()) ? parsedEnd : undefined
+
+    if (!validStart && !validEnd) return {}
+
+    if (validStart && validEnd) {
+      const from = validStart <= validEnd ? validStart : validEnd
+      const to = validStart <= validEnd ? validEnd : validStart
+      to.setHours(23, 59, 59, 999)
+      return { gte: from, lte: to }
+    }
+
+    if (validStart) return { gte: validStart }
+
+    validEnd!.setHours(23, 59, 59, 999)
+    return { lte: validEnd! }
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // FEE STRUCTURES
   // ═══════════════════════════════════════════════════════════════
@@ -423,19 +445,24 @@ export class FinanceService {
       where.student = { campusId }
     }
 
+    const dateWindow = this.buildDateWindow(query.startDate, query.endDate)
+
     const resolvedAcademicYearId = query.academicYearId
       ?? await this.resolveAcademicYearIdByRange(schoolId, query.startDate, query.endDate)
 
     if (resolvedAcademicYearId) {
-      where.invoice = { academicYearId: resolvedAcademicYearId }
-    } else if (query.startDate || query.endDate) {
-      where.paidAt = {}
-      if (query.startDate) where.paidAt.gte = new Date(query.startDate)
-      if (query.endDate) {
-        const end = new Date(query.endDate)
-        end.setHours(23, 59, 59, 999)
-        where.paidAt.lte = end
+      if (Object.keys(dateWindow).length > 0) {
+        where.invoice = {
+          OR: [
+            { academicYearId: resolvedAcademicYearId },
+            { dueDate: dateWindow },
+          ],
+        }
+      } else {
+        where.invoice = { academicYearId: resolvedAcademicYearId }
       }
+    } else if (Object.keys(dateWindow).length > 0) {
+      where.paidAt = dateWindow
     }
 
     if (query.method) {
@@ -482,19 +509,24 @@ export class FinanceService {
       where.student = { campusId }
     }
 
+    const dateWindow = this.buildDateWindow(query.startDate, query.endDate)
+
     const resolvedAcademicYearId = query.academicYearId
       ?? await this.resolveAcademicYearIdByRange(schoolId, query.startDate, query.endDate)
 
     if (resolvedAcademicYearId) {
-      where.invoice = { academicYearId: resolvedAcademicYearId }
-    } else if (query.startDate || query.endDate) {
-      where.paidAt = {}
-      if (query.startDate) where.paidAt.gte = new Date(query.startDate)
-      if (query.endDate) {
-        const end = new Date(query.endDate)
-        end.setHours(23, 59, 59, 999)
-        where.paidAt.lte = end
+      if (Object.keys(dateWindow).length > 0) {
+        where.invoice = {
+          OR: [
+            { academicYearId: resolvedAcademicYearId },
+            { dueDate: dateWindow },
+          ],
+        }
+      } else {
+        where.invoice = { academicYearId: resolvedAcademicYearId }
       }
+    } else if (Object.keys(dateWindow).length > 0) {
+      where.paidAt = dateWindow
     }
 
     if (query.method) {
@@ -1006,19 +1038,41 @@ export class FinanceService {
   // TOP FEE DEFAULTERS
   // ═══════════════════════════════════════════════════════════════
 
-  async getTopDefaulters(schoolId: string, startDate: string, endDate: string, limit = 10, campusId?: string) {
-    const start = new Date(startDate)
-    const end = new Date(endDate)
-    end.setHours(23, 59, 59, 999)
+  async getTopDefaulters(
+    schoolId: string,
+    startDate: string,
+    endDate: string,
+    limit = 10,
+    campusId?: string,
+    academicYearId?: string,
+  ) {
+    const dateWindow = this.buildDateWindow(startDate, endDate)
+
+    const resolvedAcademicYearId = academicYearId
+      ?? await this.resolveAcademicYearIdByRange(schoolId, startDate, endDate)
 
     const campusFilter = campusId ? { student: { campusId } } : {}
+
+    const invoiceScopeFilter: any = {}
+    if (resolvedAcademicYearId) {
+      if (Object.keys(dateWindow).length > 0) {
+        invoiceScopeFilter.OR = [
+          { academicYearId: resolvedAcademicYearId },
+          { dueDate: dateWindow },
+        ]
+      } else {
+        invoiceScopeFilter.academicYearId = resolvedAcademicYearId
+      }
+    } else if (Object.keys(dateWindow).length > 0) {
+      invoiceScopeFilter.dueDate = dateWindow
+    }
 
     // Get unpaid/overdue/partial invoices grouped by student
     const invoices = await this.prisma.invoice.findMany({
       where: {
         schoolId,
-        dueDate: { gte: start, lte: end },
         status: { in: ['UNPAID', 'OVERDUE', 'PARTIAL'] },
+        ...invoiceScopeFilter,
         ...campusFilter,
       },
       select: {
@@ -1065,19 +1119,41 @@ export class FinanceService {
   // TOP DISCOUNTS (students with highest total discounts)
   // ═══════════════════════════════════════════════════════════════
 
-  async getTopDiscounts(schoolId: string, startDate: string, endDate: string, limit = 10, campusId?: string) {
-    const start = new Date(startDate)
-    const end = new Date(endDate)
-    end.setHours(23, 59, 59, 999)
+  async getTopDiscounts(
+    schoolId: string,
+    startDate: string,
+    endDate: string,
+    limit = 10,
+    campusId?: string,
+    academicYearId?: string,
+  ) {
+    const dateWindow = this.buildDateWindow(startDate, endDate)
+
+    const resolvedAcademicYearId = academicYearId
+      ?? await this.resolveAcademicYearIdByRange(schoolId, startDate, endDate)
 
     const campusFilter = campusId ? { student: { campusId } } : {}
+
+    const invoiceScopeFilter: any = {}
+    if (resolvedAcademicYearId) {
+      if (Object.keys(dateWindow).length > 0) {
+        invoiceScopeFilter.OR = [
+          { academicYearId: resolvedAcademicYearId },
+          { dueDate: dateWindow },
+        ]
+      } else {
+        invoiceScopeFilter.academicYearId = resolvedAcademicYearId
+      }
+    } else if (Object.keys(dateWindow).length > 0) {
+      invoiceScopeFilter.dueDate = dateWindow
+    }
 
     // Get invoices that have discounts
     const invoices = await this.prisma.invoice.findMany({
       where: {
         schoolId,
-        dueDate: { gte: start, lte: end },
         discountAmount: { gt: 0 },
+        ...invoiceScopeFilter,
         ...campusFilter,
       },
       select: {

@@ -276,10 +276,18 @@ export class FinanceController {
     @TenantId() schoolId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('academicYearId') academicYearId?: string,
     @Query('limit') limit?: string,
     @CampusId() campusId?: string,
   ) {
-    return this.financeService.getTopDefaulters(schoolId, startDate, endDate, limit ? parseInt(limit) : 10, campusId)
+    return this.financeService.getTopDefaulters(
+      schoolId,
+      startDate,
+      endDate,
+      limit ? parseInt(limit) : 10,
+      campusId,
+      academicYearId,
+    )
   }
 
   @Get('top-discounts')
@@ -290,10 +298,18 @@ export class FinanceController {
     @TenantId() schoolId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('academicYearId') academicYearId?: string,
     @Query('limit') limit?: string,
     @CampusId() campusId?: string,
   ) {
-    return this.financeService.getTopDiscounts(schoolId, startDate, endDate, limit ? parseInt(limit) : 10, campusId)
+    return this.financeService.getTopDiscounts(
+      schoolId,
+      startDate,
+      endDate,
+      limit ? parseInt(limit) : 10,
+      campusId,
+      academicYearId,
+    )
   }
 
   @Get('pending-fees')

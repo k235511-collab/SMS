@@ -289,7 +289,12 @@ export default function FinancePage() {
   const fetchDefaulters = useCallback(async () => {
     if (!selectedYear) return
     setDefaultersLoading(true)
-    const params = { startDate: selectedYear.startDate, endDate: selectedYear.endDate, limit: '10' }
+    const params = {
+      startDate: selectedYear.startDate,
+      endDate: selectedYear.endDate,
+      academicYearId: selectedYear.id,
+      limit: '10',
+    }
     const res = await api.get<Defaulter[]>('/finance/top-defaulters', { params })
     if (res.success && res.data) setDefaulters(Array.isArray(res.data) ? res.data : [])
     setDefaultersLoading(false)
@@ -298,7 +303,12 @@ export default function FinancePage() {
   const fetchTopDiscounts = useCallback(async () => {
     if (!selectedYear) return
     setTopDiscountsLoading(true)
-    const params = { startDate: selectedYear.startDate, endDate: selectedYear.endDate, limit: '10' }
+    const params = {
+      startDate: selectedYear.startDate,
+      endDate: selectedYear.endDate,
+      academicYearId: selectedYear.id,
+      limit: '10',
+    }
     const res = await api.get<TopDiscount[]>('/finance/top-discounts', { params })
     if (res.success && res.data) setTopDiscounts(Array.isArray(res.data) ? res.data : [])
     setTopDiscountsLoading(false)
