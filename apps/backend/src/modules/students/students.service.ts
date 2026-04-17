@@ -70,7 +70,7 @@ const STUDENT_IMPORT_REQUIRED_COLUMNS: Array<(typeof STUDENT_TEMPLATE_COLUMNS)[n
   'Class Section',
 ]
 
-const STUDENT_IMPORT_TEMPLATE_VERSION = '2.0'
+const STUDENT_IMPORT_TEMPLATE_VERSION = '2'
 const STUDENT_IMPORT_METADATA_KEYS = {
   templateVersion: 'Template Version',
   schoolId: 'School ID',
@@ -263,7 +263,10 @@ export class StudentsService {
     }
 
     const metadata = this.readImportMetadata(workbook)
-    if (metadata.templateVersion !== STUDENT_IMPORT_TEMPLATE_VERSION) {
+    const currentVersion = STUDENT_IMPORT_TEMPLATE_VERSION.replace(/\.0$/, '')
+    const fileVersion = metadata.templateVersion.replace(/\.0$/, '')
+
+    if (fileVersion !== currentVersion) {
       throw new BadRequestException(
         `Unsupported template version "${metadata.templateVersion}". Please download the latest template (v${STUDENT_IMPORT_TEMPLATE_VERSION}).`,
       )
