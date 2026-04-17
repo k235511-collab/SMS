@@ -832,22 +832,24 @@ export class StudentsService {
         'Roll Number': student.rollNumber,
         'First Name': student.firstName,
         'Last Name': student.lastName,
+        'Class Section': this.buildClassSectionLabel(
+          student.class?.name || '',
+          student.section?.name || '',
+          student.class?.code,
+        ),
         Gender: student.gender || '',
-        Status: student.status,
         'Date Of Birth': student.dateOfBirth ? new Date(student.dateOfBirth).toISOString().slice(0, 10) : '',
-        'Class Name': student.class?.name || '',
-        'Class Code': student.class?.code || '',
-        'Section Name': student.section?.name || '',
+        'Blood Group': student.bloodGroup || '',
         'Guardian Name': student.guardianName || (parent ? `${parent.firstName} ${parent.lastName}` : ''),
         'Guardian Phone': student.guardianPhone || parent?.phone || '',
         'Guardian Email': student.guardianEmail || '',
-        Phone: student.phone || '',
-        CNIC: student.cnic || '',
         Address: student.address || '',
+        Status: student.status,
+        CNIC: student.cnic || '',
+        Phone: student.phone || '',
         Group: student.group || '',
         Religion: student.religion || '',
         'Admission Note': student.admissionNote || '',
-        Campus: student.class?.campus?.name || '',
       }
     })
 
@@ -856,11 +858,11 @@ export class StudentsService {
     XLSX.utils.book_append_sheet(workbook, studentSheet, 'Students')
 
     const metadataSheet = XLSX.utils.json_to_sheet([
-      { Key: 'Template Version', Value: STUDENT_IMPORT_TEMPLATE_VERSION },
-      { Key: 'Exported At', Value: new Date().toISOString() },
-      { Key: 'School ID', Value: schoolId },
-      { Key: 'Campus ID', Value: campus.id },
-      { Key: 'Campus Name', Value: campus.name },
+      { Key: STUDENT_IMPORT_METADATA_KEYS.templateVersion, Value: STUDENT_IMPORT_TEMPLATE_VERSION },
+      { Key: STUDENT_IMPORT_METADATA_KEYS.generatedAt, Value: new Date().toISOString() },
+      { Key: STUDENT_IMPORT_METADATA_KEYS.schoolId, Value: schoolId },
+      { Key: STUDENT_IMPORT_METADATA_KEYS.campusId, Value: campus.id },
+      { Key: STUDENT_IMPORT_METADATA_KEYS.campusName, Value: campus.name },
       { Key: 'Total Rows', Value: rows.length },
     ])
     XLSX.utils.book_append_sheet(workbook, metadataSheet, 'Metadata')
