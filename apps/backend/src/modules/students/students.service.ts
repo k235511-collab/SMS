@@ -1696,8 +1696,11 @@ export class StudentsService {
           continue
         }
 
-        // Determine the source class (from enrollment or from student record)
-        const sourceClassId = student.enrollments[0]?.classId ?? student.classId
+        // Prefer source-year enrollment class, but allow current class as fallback
+        // because UI mapping can be based on student.current class.
+        const enrollmentClassId = student.enrollments[0]?.classId ?? null
+        const currentClassId = student.classId ?? null
+        const sourceClassId = enrollmentClassId ?? currentClassId
         if (!sourceClassId) {
           skipped++
           errors.push(`${student.firstName} ${student.lastName} has no class assigned`)
@@ -1705,7 +1708,9 @@ export class StudentsService {
         }
 
         // Look up the mapping for this class
-        const mapping = classMap.get(sourceClassId)
+        const mapping =
+          classMap.get(sourceClassId) ??
+          (currentClassId && currentClassId !== sourceClassId ? classMap.get(currentClassId) : undefined)
         if (!mapping) {
           skipped++
           const classRecord = await tx.class.findUnique({ where: { id: sourceClassId }, select: { name: true } })
