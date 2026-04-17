@@ -130,9 +130,10 @@ export class StudentsService {
 
   private normalizeLookup(value: unknown): string {
     return String(value ?? '')
-      .trim()
       .toLowerCase()
+      .replace(/[^\w\s|()]/g, '') // Remove special characters except alphanumeric, space, pipe, and parentheses
       .replace(/\s+/g, ' ')
+      .trim()
   }
 
   private toStringValue(value: unknown): string {
@@ -239,7 +240,7 @@ export class StudentsService {
       throw new BadRequestException('No classes found in the selected campus. Create classes before importing students.')
     }
 
-    const classesWithoutSections = classes
+    const classesWithoutSections = (classes as any[])
       .filter((item) => item.sections.length === 0)
       .map((item) => item.name)
 
@@ -290,11 +291,22 @@ export class StudentsService {
       defval: '',
       raw: false,
     })
-    const headerRow = Array.isArray(sheetRows[0]) ? sheetRows[0] : []
-    const normalizedHeaders = new Set(headerRow.map((cell) => this.normalizeLookup(cell)))
-    const missingHeaders = STUDENT_TEMPLATE_COLUMNS.filter(
-      (column) => !normalizedHeaders.has(this.normalizeLookup(column)),
-    )
+
+    const headerRow = (sheetRows[0] || []) as string[]
+    const normalizedFileHeaders = headerRow.map((h) => this.normalizeLookup(h))
+
+    const columnMap = new Map<string, number>()
+    const missingHeaders: string[] = []
+
+    STUDENT_TEMPLATE_COLUMNS.forEach((col) => {
+      const normalizedTarget = this.normalizeLookup(col)
+      const index = normalizedFileHeaders.indexOf(normalizedTarget)
+      if (index !== -1) {
+        columnMap.set(col, index)
+      } else {
+        missingHeaders.push(col)
+      }
+    })
 
     if (missingHeaders.length > 0) {
       throw new BadRequestException(
@@ -302,27 +314,46 @@ export class StudentsService {
       )
     }
 
-    const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-      defval: '',
-      raw: false,
+    const dataRows = sheetRows.slice(1)
+    const nonEmptyRows = dataRows.filter((row: any) =>
+      Array.isArray(row) && row.some((cell) => String(cell ?? '').trim() !== ''),
+    ) as any[][]
+
+    const rowPayloads = nonEmptyRows.map((row, index) => {
+      const values: any = {}
+      STUDENT_TEMPLATE_COLUMNS.forEach((col) => {
+        const colIdx = columnMap.get(col)
+        values[col] = this.toStringValue(colIdx !== undefined ? row[colIdx] : '')
+      })
+
+      return {
+        rowNumber: index + 2,
+        values,
+      }
     })
 
-    const classes = await this.prisma.class.findMany({
-      where: {
-        schoolId,
-        deletedAt: null,
-        campusId,
-      },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        sections: {
-          where: { deletedAt: null },
-          select: { id: true, name: true },
+    const [classes, existingRolls] = await Promise.all([
+      this.prisma.class.findMany({
+        where: {
+          schoolId,
+          deletedAt: null,
+          campusId,
         },
-      },
-    })
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          sections: {
+            where: { deletedAt: null },
+            select: { id: true, name: true },
+          },
+        },
+      }),
+      this.prisma.student.findMany({
+        where: { schoolId, campusId, deletedAt: null },
+        select: { rollNumber: true },
+      }),
+    ])
 
     if (classes.length === 0) {
       throw new BadRequestException('No classes found for the selected campus. Create classes before importing students.')
@@ -338,8 +369,8 @@ export class StudentsService {
       }
     >()
 
-    classes.forEach((item) => {
-      item.sections.forEach((section) => {
+    classes.forEach((item: any) => {
+      item.sections.forEach((section: any) => {
         const labelWithCode = this.buildClassSectionLabel(item.name, section.name, item.code)
         classSectionMap.set(this.normalizeLookup(labelWithCode), {
           classId: item.id,
@@ -360,40 +391,10 @@ export class StudentsService {
 
     const errors: StudentImportError[] = []
     const rows: StudentImportRow[] = []
+    const existingRollSet = new Set(existingRolls.map((row: { rollNumber: string }) => row.rollNumber.toLowerCase()))
     const seenRollNumbers = new Map<string, number>()
 
-    const rowPayloads = rawRows.map((raw, index) => ({
-      rowNumber: index + 2,
-      values: Object.fromEntries(
-        STUDENT_TEMPLATE_COLUMNS.map((column) => [column, this.toStringValue(raw[column])]),
-      ) as Record<(typeof STUDENT_TEMPLATE_COLUMNS)[number], string>,
-    }))
-
-    const nonEmptyPayloads = rowPayloads.filter((item) =>
-      Object.values(item.values).some((value) => value !== ''),
-    )
-
-    const rollNumbersToCheck = Array.from(
-      new Set(
-        nonEmptyPayloads
-          .map((item) => item.values['Roll Number'])
-          .filter((value) => value.length > 0),
-      ),
-    )
-
-    const existingRolls = await this.prisma.student.findMany({
-      where: {
-        schoolId,
-        campusId,
-        deletedAt: null,
-        rollNumber: { in: rollNumbersToCheck },
-      },
-      select: { rollNumber: true },
-    })
-
-    const existingRollSet = new Set(existingRolls.map((row) => row.rollNumber.toLowerCase()))
-
-    for (const payload of nonEmptyPayloads) {
+    for (const payload of rowPayloads) {
       const { rowNumber, values } = payload
 
       const rollNumber = values['Roll Number']
@@ -497,7 +498,7 @@ export class StudentsService {
 
     const preview: StudentImportPreview = {
       summary: {
-        totalRows: nonEmptyPayloads.length,
+        totalRows: rowPayloads.length,
         validRows: rows.length,
         invalidRows: errors.length > 0 ? new Set(errors.map((error) => error.rowNumber)).size : 0,
       },
@@ -547,8 +548,8 @@ export class StudentsService {
       },
     })
 
-    const classSectionOptions = classes.flatMap((item) =>
-      item.sections.map((section) => ({
+    const classSectionOptions = (classes as any[]).flatMap((item) =>
+      item.sections.map((section: any) => ({
         label: this.buildClassSectionLabel(item.name, section.name, item.code),
         classId: item.id,
         className: item.name,
@@ -614,19 +615,19 @@ export class StudentsService {
     })
 
     classesSheet.addRow(['Class Name', 'Class Code', 'Class ID'])
-    classes.forEach((item) => {
+    classes.forEach((item: any) => {
       classesSheet.addRow([item.name, item.code || '', item.id])
     })
     classesSheet.getRow(1).font = { bold: true }
 
     sectionsSheet.addRow(['Class Name', 'Class Code', 'Section Name', 'Section ID'])
-    classSectionOptions.forEach((row) => {
+    classSectionOptions.forEach((row: any) => {
       sectionsSheet.addRow([row.className, row.classCode, row.sectionName, row.sectionId])
     })
     sectionsSheet.getRow(1).font = { bold: true }
 
     classSectionLookupSheet.addRow(['Class Section', 'Class ID', 'Section ID', 'Class Name', 'Section Name'])
-    classSectionOptions.forEach((row) => {
+    classSectionOptions.forEach((row: any) => {
       classSectionLookupSheet.addRow([row.label, row.classId, row.sectionId, row.className, row.sectionName])
     })
 
@@ -770,21 +771,19 @@ export class StudentsService {
     if (effectiveTeacherId) {
       const classIds = await this.getTeacherClassFilter(effectiveTeacherId, schoolId)
       if (!classIds || classIds.length === 0) {
-        const emptyWb = XLSX.utils.book_new()
-        XLSX.utils.book_append_sheet(emptyWb, XLSX.utils.json_to_sheet([]), 'Students')
-        XLSX.utils.book_append_sheet(
-          emptyWb,
-          XLSX.utils.json_to_sheet([
-            { Key: 'Template Version', Value: STUDENT_IMPORT_TEMPLATE_VERSION },
-            { Key: 'Exported At', Value: new Date().toISOString() },
-            { Key: 'School ID', Value: schoolId },
-            { Key: 'Campus ID', Value: campus.id },
-            { Key: 'Campus Name', Value: campus.name },
-            { Key: 'Total Rows', Value: 0 },
-          ]),
-          'Metadata',
-        )
-        return XLSX.write(emptyWb, { type: 'buffer', bookType: 'xlsx' })
+        const workbook = new ExcelJS.Workbook()
+        workbook.addWorksheet('Students').addRow([...STUDENT_TEMPLATE_COLUMNS])
+        const metadataSheet = workbook.addWorksheet('Metadata')
+        metadataSheet.addRow(['Key', 'Value'])
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.templateVersion, STUDENT_IMPORT_TEMPLATE_VERSION])
+        metadataSheet.addRow(['Exported At', new Date().toISOString()])
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.schoolId, schoolId])
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusId, campus.id])
+        metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusName, campus.name])
+        metadataSheet.addRow(['Total Rows', 0])
+        metadataSheet.state = 'veryHidden'
+        const buffer = await workbook.xlsx.writeBuffer()
+        return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer)
       }
       andWhere.push({ classId: { in: classIds } })
     }
@@ -829,7 +828,7 @@ export class StudentsService {
       orderBy: { createdAt: 'desc' },
     })
 
-    const rows = students.map((student) => {
+    const rows = students.map((student: any) => {
       const parent = student.parents?.[0]?.parent
       return {
         'Roll Number': student.rollNumber,
@@ -856,21 +855,30 @@ export class StudentsService {
       }
     })
 
-    const workbook = XLSX.utils.book_new()
-    const studentSheet = XLSX.utils.json_to_sheet(rows, { header: [...STUDENT_TEMPLATE_COLUMNS] })
-    XLSX.utils.book_append_sheet(workbook, studentSheet, 'Students')
+    const workbook = new ExcelJS.Workbook()
+    const sheet = workbook.addWorksheet('Students')
+    const metadataSheet = workbook.addWorksheet('Metadata')
 
-    const metadataSheet = XLSX.utils.json_to_sheet([
-      { Key: STUDENT_IMPORT_METADATA_KEYS.templateVersion, Value: STUDENT_IMPORT_TEMPLATE_VERSION },
-      { Key: STUDENT_IMPORT_METADATA_KEYS.generatedAt, Value: new Date().toISOString() },
-      { Key: STUDENT_IMPORT_METADATA_KEYS.schoolId, Value: schoolId },
-      { Key: STUDENT_IMPORT_METADATA_KEYS.campusId, Value: campus.id },
-      { Key: STUDENT_IMPORT_METADATA_KEYS.campusName, Value: campus.name },
-      { Key: 'Total Rows', Value: rows.length },
-    ])
-    XLSX.utils.book_append_sheet(workbook, metadataSheet, 'Metadata')
+    const headers = [...STUDENT_TEMPLATE_COLUMNS]
+    sheet.addRow(headers)
 
-    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
+    rows.forEach((row: any) => {
+      const rowData = headers.map((h) => row[h as keyof typeof row])
+      sheet.addRow(rowData)
+    })
+
+    metadataSheet.addRow(['Key', 'Value'])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.templateVersion, STUDENT_IMPORT_TEMPLATE_VERSION])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.generatedAt, new Date().toISOString()])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.schoolId, schoolId])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusId, campus.id])
+    metadataSheet.addRow([STUDENT_IMPORT_METADATA_KEYS.campusName, campus.name])
+    metadataSheet.addRow(['Total Rows', rows.length])
+
+    metadataSheet.state = 'veryHidden'
+
+    const buffer = await workbook.xlsx.writeBuffer()
+    return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer)
   }
 
   async create(schoolId: string, dto: CreateStudentDto, campusId?: string) {
@@ -911,7 +919,7 @@ export class StudentsService {
     }
 
     // Use a transaction to create student + enrollment atomically
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx: any) => {
       const student = await tx.student.create({
         data,
         include: {
@@ -1070,8 +1078,8 @@ export class StudentsService {
       this.prisma.student.count({ where }),
     ])
 
-    let students = data.map(s => {
-      const balance = s.invoices.reduce((acc, inv) => acc + (inv.totalAmount - inv.paidAmount), 0)
+    let students = data.map((s: any) => {
+      const balance = s.invoices.reduce((acc: number, inv: any) => acc + (inv.totalAmount - inv.paidAmount), 0)
       return { ...s, balance }
     })
 
@@ -1082,7 +1090,7 @@ export class StudentsService {
     if (query.balanceMin !== undefined || query.balanceMax !== undefined) {
       const bMin = query.balanceMin ? parseFloat(query.balanceMin) : -Infinity
       const bMax = query.balanceMax ? parseFloat(query.balanceMax) : Infinity
-      students = students.filter(s => s.balance >= bMin && s.balance <= bMax)
+      students = students.filter((s: any) => s.balance >= bMin && s.balance <= bMax)
     }
 
     return new PaginatedResult(students, total, query.page ?? 1, query.pageSize ?? 20)
@@ -1144,7 +1152,7 @@ export class StudentsService {
       throw new NotFoundException(`Student with ID "${id}" not found`)
     }
 
-    const balance = student.invoices.reduce((acc, inv) => acc + (inv.totalAmount - inv.paidAmount), 0)
+    const balance = student.invoices.reduce((acc: number, inv: any) => acc + (inv.totalAmount - inv.paidAmount), 0)
 
     return { ...student, balance }
   }
@@ -1363,7 +1371,7 @@ export class StudentsService {
     requesterUserId?: string | null,
   ) {
     await this.findById(id, schoolId, campusId, teacherId, requesterUserId)
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: any) => {
       // Preserve payment history by cancelling partial invoices before student deletion.
       await tx.invoice.updateMany({
         where: {
@@ -1507,7 +1515,7 @@ export class StudentsService {
     ])
 
     const genderDistribution: Record<string, number> = {}
-    genderData.forEach((g) => {
+    genderData.forEach((g: any) => {
       const label = g.gender || 'OTHER'
       genderDistribution[label] = (genderDistribution[label] || 0) + g._count.id
     })
@@ -1618,7 +1626,7 @@ export class StudentsService {
     let skipped = 0
     const errors: string[] = []
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       for (const student of students) {
         // Check if already enrolled in target year
         const existingEnrollment = await tx.studentEnrollment.findUnique({
