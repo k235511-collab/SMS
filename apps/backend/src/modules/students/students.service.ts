@@ -854,7 +854,7 @@ export class StudentsService {
     })
 
     const workbook = XLSX.utils.book_new()
-    const studentSheet = XLSX.utils.json_to_sheet(rows)
+    const studentSheet = XLSX.utils.json_to_sheet(rows, { header: [...STUDENT_TEMPLATE_COLUMNS] })
     XLSX.utils.book_append_sheet(workbook, studentSheet, 'Students')
 
     const metadataSheet = XLSX.utils.json_to_sheet([
