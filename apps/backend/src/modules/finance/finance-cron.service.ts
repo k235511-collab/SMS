@@ -2,12 +2,16 @@ import { Injectable, Logger } from '@nestjs/common'
 import { Cron, CronExpression } from '@nestjs/schedule'
 import { PrismaService } from '../../prisma/prisma.service'
 import { DiscountType, FeeFrequency } from '@prisma/client'
+import { WhatsappService } from '../communications/whatsapp.service'
 
 @Injectable()
 export class FinanceCronService {
   private readonly logger = new Logger(FinanceCronService.name)
 
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsappService: WhatsappService,
+  ) { }
 
   /**
    * Calculate discounted total from a fee amount and student's discount settings.
@@ -100,6 +104,14 @@ export class FinanceCronService {
 
     if (result.count > 0) {
       this.logger.log(`Marked ${result.count} invoices as OVERDUE`)
+    }
+
+    const schools = await this.prisma.school.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    })
+    for (const school of schools) {
+      await this.whatsappService.processFeeDefaulterTriggers(school.id)
     }
   }
 

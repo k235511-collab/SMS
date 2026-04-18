@@ -3,12 +3,14 @@ import { PrismaService } from '../../prisma/prisma.service'
 import { PaginatedResult } from '../../common/dto'
 import { TeacherScopeService } from '../teachers/teacher-scope.service'
 import { MarkAttendanceDto, AttendanceQueryDto } from './dto'
+import { WhatsappService } from '../communications/whatsapp.service'
 
 @Injectable()
 export class AttendanceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly teacherScopeService: TeacherScopeService,
+    private readonly whatsappService: WhatsappService,
   ) { }
 
   // ─── Helper: resolve teacher's allowed sectionIds ───────────────
@@ -40,7 +42,7 @@ export class AttendanceService {
     return section
   }
 
-  async markAttendance(schoolId: string, dto: MarkAttendanceDto, teacherId?: string | null) {
+  async markAttendance(schoolId: string, dto: MarkAttendanceDto, teacherId?: string | null, campusId?: string) {
     // Teacher validation: only class teachers can mark attendance
     if (teacherId) {
       if (!dto.sectionId) {
@@ -105,6 +107,8 @@ export class AttendanceService {
         })
       }),
     )
+
+    await this.whatsappService.processAbsentTriggers(schoolId, campusId, dto.records as any, dto.date)
 
     return { marked: results.length, date: dto.date }
   }

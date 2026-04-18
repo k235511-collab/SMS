@@ -25,8 +25,13 @@ export class AttendanceController {
   @RequirePermission(Permission.CREATE_ATTENDANCE)
   @ApiOperation({ summary: 'Mark attendance for multiple students' })
   @ApiResponse({ status: 201, description: 'Attendance marked successfully' })
-  mark(@TenantId() schoolId: string, @Body() dto: MarkAttendanceDto, @TeacherId() teacherId?: string | null) {
-    return this.attendanceService.markAttendance(schoolId, dto, teacherId)
+  mark(
+    @TenantId() schoolId: string,
+    @Body() dto: MarkAttendanceDto,
+    @TeacherId() teacherId?: string | null,
+    @CampusId() campusId?: string,
+  ) {
+    return this.attendanceService.markAttendance(schoolId, dto, teacherId, campusId)
   }
 
   @Get()

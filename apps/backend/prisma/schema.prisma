@@ -70,6 +70,8 @@ model School {
   campuses                Campus[]
   classes                 Class[]
   communicationLogs       CommunicationLog[]
+  whatsappCampusConfigs   WhatsAppCampusConfig[]
+  whatsappTriggerRules    WhatsAppTriggerRule[]
   examPapers              ExamPaper[]
   examQuestions           ExamQuestion[]
   examResults             ExamResult[]
@@ -126,6 +128,8 @@ model Campus {
   school            School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   classes           Class[]
   communicationLogs CommunicationLog[]
+  whatsappConfig    WhatsAppCampusConfig?
+  whatsappTriggers  WhatsAppTriggerRule[]
   exams             Exam[]
   expenses          Expense[]
   feeStructures     FeeStructure[]
@@ -1044,6 +1048,57 @@ model CommunicationLog {
   @@map("communication_logs")
 }
 
+model WhatsAppCampusConfig {
+  id                String              @id @default(uuid())
+  schoolId          String
+  campusId          String              @unique
+  providerMode      WhatsAppProviderMode @default(CENTRAL_WABA)
+  businessAccountId String?
+  appId             String?
+  phoneNumberId     String?
+  whatsappNumber    String?
+  displayName       String?
+  accessToken       String?
+  webhookVerifyToken String?
+  isVerified        Boolean             @default(false)
+  isActive          Boolean             @default(false)
+  verifiedAt        DateTime?
+  lastTestAt        DateTime?
+  messagesSentThisMonth Int             @default(0)
+  conversationsThisMonth Int            @default(0)
+  lastResetDate     DateTime?           @db.Date
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  school            School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  campus            Campus              @relation(fields: [campusId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+  @@index([isActive])
+  @@map("whatsapp_campus_configs")
+}
+
+model WhatsAppTriggerRule {
+  id              String               @id @default(uuid())
+  schoolId        String
+  campusId        String
+  triggerType     WhatsAppTriggerType
+  isEnabled       Boolean              @default(true)
+  templateName    String?
+  cooldownHours   Int                  @default(0)
+  minOutstandingAmount Float?
+  minOverdueDays  Int?
+  metadata        Json?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  school          School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  campus          Campus               @relation(fields: [campusId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, campusId, triggerType])
+  @@index([schoolId])
+  @@index([campusId])
+  @@map("whatsapp_trigger_rules")
+}
+
 model Resource {
   id           String   @id @default(uuid())
   title        String
@@ -1324,6 +1379,17 @@ enum MessageStatus {
   DELIVERED
   FAILED
   READ
+}
+
+enum WhatsAppProviderMode {
+  CENTRAL_WABA
+  OWN_WABA
+}
+
+enum WhatsAppTriggerType {
+  ABSENT
+  FEE_DEFAULTER
+  ANNOUNCEMENT
 }
 
 enum DocumentType {
