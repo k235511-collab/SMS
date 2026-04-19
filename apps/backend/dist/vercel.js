@@ -213534,8 +213534,8 @@ let AttendanceController = class AttendanceController {
     constructor(attendanceService) {
         this.attendanceService = attendanceService;
     }
-    mark(schoolId, dto, teacherId) {
-        return this.attendanceService.markAttendance(schoolId, dto, teacherId);
+    mark(schoolId, dto, teacherId, campusId) {
+        return this.attendanceService.markAttendance(schoolId, dto, teacherId, campusId);
     }
     findAll(schoolId, campusId, query, teacherId) {
         return this.attendanceService.findAll(schoolId, query, campusId, teacherId);
@@ -213559,8 +213559,9 @@ __decorate([
     __param(0, (0, decorators_1.TenantId)()),
     __param(1, (0, common_1.Body)()),
     __param(2, (0, decorators_1.TeacherId)()),
+    __param(3, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, typeof (_b = typeof dto_1.MarkAttendanceDto !== "undefined" && dto_1.MarkAttendanceDto) === "function" ? _b : Object, Object]),
+    __metadata("design:paramtypes", [String, typeof (_b = typeof dto_1.MarkAttendanceDto !== "undefined" && dto_1.MarkAttendanceDto) === "function" ? _b : Object, Object, String]),
     __metadata("design:returntype", void 0)
 ], AttendanceController.prototype, "mark", null);
 __decorate([
@@ -213648,12 +213649,13 @@ const common_1 = __webpack_require__(47305);
 const attendance_controller_1 = __webpack_require__(64240);
 const attendance_service_1 = __webpack_require__(82909);
 const teachers_module_1 = __webpack_require__(67791);
+const communications_module_1 = __webpack_require__(50892);
 let AttendanceModule = class AttendanceModule {
 };
 exports.AttendanceModule = AttendanceModule;
 exports.AttendanceModule = AttendanceModule = __decorate([
     (0, common_1.Module)({
-        imports: [teachers_module_1.TeachersModule],
+        imports: [teachers_module_1.TeachersModule, communications_module_1.CommunicationsModule],
         controllers: [attendance_controller_1.AttendanceController],
         providers: [attendance_service_1.AttendanceService],
         exports: [attendance_service_1.AttendanceService],
@@ -213677,19 +213679,22 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var _a, _b;
+var _a, _b, _c;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AttendanceService = void 0;
 const common_1 = __webpack_require__(47305);
 const prisma_service_1 = __webpack_require__(29105);
 const dto_1 = __webpack_require__(70549);
 const teacher_scope_service_1 = __webpack_require__(49385);
+const whatsapp_service_1 = __webpack_require__(39126);
 let AttendanceService = class AttendanceService {
     prisma;
     teacherScopeService;
-    constructor(prisma, teacherScopeService) {
+    whatsappService;
+    constructor(prisma, teacherScopeService, whatsappService) {
         this.prisma = prisma;
         this.teacherScopeService = teacherScopeService;
+        this.whatsappService = whatsappService;
     }
     // ─── Helper: resolve teacher's allowed sectionIds ───────────────
     async getTeacherScope(teacherId, schoolId) {
@@ -213706,7 +213711,7 @@ let AttendanceService = class AttendanceService {
         await this.teacherScopeService.validateClassTeacherAccess(teacherId, schoolId, section.classId, sectionId);
         return section;
     }
-    async markAttendance(schoolId, dto, teacherId) {
+    async markAttendance(schoolId, dto, teacherId, campusId) {
         // Teacher validation: only class teachers can mark attendance
         if (teacherId) {
             if (!dto.sectionId) {
@@ -213760,6 +213765,7 @@ let AttendanceService = class AttendanceService {
                 },
             });
         }));
+        await this.whatsappService.processAbsentTriggers(schoolId, campusId, dto.records, dto.date);
         return { marked: results.length, date: dto.date };
     }
     async findAll(schoolId, query, campusId, teacherId) {
@@ -213922,7 +213928,7 @@ let AttendanceService = class AttendanceService {
 exports.AttendanceService = AttendanceService;
 exports.AttendanceService = AttendanceService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof teacher_scope_service_1.TeacherScopeService !== "undefined" && teacher_scope_service_1.TeacherScopeService) === "function" ? _b : Object])
+    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof teacher_scope_service_1.TeacherScopeService !== "undefined" && teacher_scope_service_1.TeacherScopeService) === "function" ? _b : Object, typeof (_c = typeof whatsapp_service_1.WhatsappService !== "undefined" && whatsapp_service_1.WhatsappService) === "function" ? _c : Object])
 ], AttendanceService);
 
 
@@ -216185,14 +216191,63 @@ let CommunicationsController = class CommunicationsController {
         this.whatsappService = whatsappService;
         this.prisma = prisma;
     }
-    sendSms(schoolId, dto, campusId) {
-        return this.smsService.send(schoolId, { to: dto.recipient, message: dto.message }, undefined, campusId);
+    sendSms() {
+        throw new common_1.BadRequestException('SMS channel has been disabled. Use WhatsApp only.');
     }
-    sendEmail(schoolId, dto, campusId) {
-        return this.emailService.send(schoolId, dto, undefined, campusId);
+    sendEmail() {
+        throw new common_1.BadRequestException('Email channel has been disabled. Use WhatsApp only.');
     }
     sendWhatsapp(schoolId, dto, campusId) {
         return this.whatsappService.send(schoolId, dto, undefined, campusId);
+    }
+    getWhatsappConfig(schoolId, campusId) {
+        return this.whatsappService.getCampusConfig(schoolId, campusId);
+    }
+    upsertWhatsappConfig(schoolId, campusId, dto) {
+        if (!campusId)
+            throw new common_1.BadRequestException('Campus is required');
+        return this.whatsappService.upsertCampusConfig(schoolId, campusId, dto);
+    }
+    getWhatsappTriggers(schoolId, campusId) {
+        return this.whatsappService.getTriggerRules(schoolId, campusId);
+    }
+    upsertWhatsappTrigger(schoolId, campusId, dto) {
+        if (!campusId)
+            throw new common_1.BadRequestException('Campus is required');
+        return this.whatsappService.upsertTriggerRule(schoolId, campusId, dto);
+    }
+    sendAnnouncement(schoolId, campusId, dto) {
+        if (!campusId)
+            throw new common_1.BadRequestException('Campus is required');
+        return this.whatsappService.sendAnnouncementToCampus(schoolId, campusId, dto);
+    }
+    getAbsenteeRecipients(schoolId, campusId, date) {
+        if (!campusId)
+            throw new common_1.BadRequestException('Campus is required');
+        return this.whatsappService.getAbsenteeCandidates(schoolId, campusId, date);
+    }
+    getAnnouncementRecipients(schoolId, campusId) {
+        if (!campusId)
+            throw new common_1.BadRequestException('Campus is required');
+        return this.whatsappService.getAnnouncementCandidates(schoolId, campusId);
+    }
+    sendAbsenteesToSelected(schoolId, campusId, dto) {
+        if (!campusId)
+            throw new common_1.BadRequestException('Campus is required');
+        return this.whatsappService.sendAbsenteeToSelected(schoolId, campusId, dto);
+    }
+    getFeeDefaulterRecipients(schoolId, campusId, minOutstandingAmount, minOverdueDays) {
+        if (!campusId)
+            throw new common_1.BadRequestException('Campus is required');
+        return this.whatsappService.getFeeDefaulterCandidates(schoolId, campusId, {
+            minOutstandingAmount: minOutstandingAmount ? Number(minOutstandingAmount) : undefined,
+            minOverdueDays: minOverdueDays ? Number(minOverdueDays) : undefined,
+        });
+    }
+    sendFeeDefaultersToSelected(schoolId, campusId, dto) {
+        if (!campusId)
+            throw new common_1.BadRequestException('Campus is required');
+        return this.whatsappService.sendFeeDefaulterToSelected(schoolId, campusId, dto);
     }
     async getLogs(schoolId, channel, page, pageSize, campusId) {
         const where = { schoolId };
@@ -216204,7 +216259,10 @@ let CommunicationsController = class CommunicationsController {
         const ps = Number(pageSize) || 20;
         const [data, total] = await this.prisma.$transaction([
             this.prisma.communicationLog.findMany({
-                where, skip: (p - 1) * ps, take: ps, orderBy: { sentAt: 'desc' },
+                where,
+                skip: (p - 1) * ps,
+                take: ps,
+                orderBy: { sentAt: 'desc' },
             }),
             this.prisma.communicationLog.count({ where }),
         ]);
@@ -216216,22 +216274,16 @@ __decorate([
     (0, common_1.Post)('sms'),
     (0, swagger_1.ApiOperation)({ summary: 'Send SMS' }),
     (0, decorators_1.RequirePermission)(constants_1.Permission.CREATE_COMMUNICATION),
-    __param(0, (0, decorators_1.TenantId)()),
-    __param(1, (0, common_1.Body)()),
-    __param(2, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String]),
+    __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], CommunicationsController.prototype, "sendSms", null);
 __decorate([
     (0, common_1.Post)('email'),
     (0, swagger_1.ApiOperation)({ summary: 'Send email' }),
     (0, decorators_1.RequirePermission)(constants_1.Permission.CREATE_COMMUNICATION),
-    __param(0, (0, decorators_1.TenantId)()),
-    __param(1, (0, common_1.Body)()),
-    __param(2, (0, decorators_1.CampusId)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String]),
+    __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], CommunicationsController.prototype, "sendEmail", null);
 __decorate([
@@ -216245,6 +216297,114 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, String]),
     __metadata("design:returntype", void 0)
 ], CommunicationsController.prototype, "sendWhatsapp", null);
+__decorate([
+    (0, common_1.Get)('whatsapp/config'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get WhatsApp config for selected campus' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.READ_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "getWhatsappConfig", null);
+__decorate([
+    (0, common_1.Post)('whatsapp/config'),
+    (0, swagger_1.ApiOperation)({ summary: 'Create or update WhatsApp config for selected campus' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.CREATE_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "upsertWhatsappConfig", null);
+__decorate([
+    (0, common_1.Get)('whatsapp/triggers'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get WhatsApp triggers for selected campus' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.READ_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "getWhatsappTriggers", null);
+__decorate([
+    (0, common_1.Post)('whatsapp/triggers'),
+    (0, swagger_1.ApiOperation)({ summary: 'Upsert WhatsApp trigger rule for selected campus' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.CREATE_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "upsertWhatsappTrigger", null);
+__decorate([
+    (0, common_1.Post)('whatsapp/announcement'),
+    (0, swagger_1.ApiOperation)({ summary: 'Broadcast WhatsApp announcement for selected campus' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.CREATE_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "sendAnnouncement", null);
+__decorate([
+    (0, common_1.Get)('whatsapp/recipients/absentees'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get absentee recipient list for selected campus' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.READ_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __param(2, (0, common_1.Query)('date')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, String]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "getAbsenteeRecipients", null);
+__decorate([
+    (0, common_1.Get)('whatsapp/recipients/announcements'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get announcement recipient list for selected campus' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.READ_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "getAnnouncementRecipients", null);
+__decorate([
+    (0, common_1.Post)('whatsapp/send/absentees'),
+    (0, swagger_1.ApiOperation)({ summary: 'Send absentee WhatsApp to selected students only' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.CREATE_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "sendAbsenteesToSelected", null);
+__decorate([
+    (0, common_1.Get)('whatsapp/recipients/fee-defaulters'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get fee-defaulter recipient list for selected campus' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.READ_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __param(2, (0, common_1.Query)('minOutstandingAmount')),
+    __param(3, (0, common_1.Query)('minOverdueDays')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, String, String]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "getFeeDefaulterRecipients", null);
+__decorate([
+    (0, common_1.Post)('whatsapp/send/fee-defaulters'),
+    (0, swagger_1.ApiOperation)({ summary: 'Send fee-defaulter WhatsApp to selected students only' }),
+    (0, decorators_1.RequirePermission)(constants_1.Permission.CREATE_COMMUNICATION),
+    __param(0, (0, decorators_1.TenantId)()),
+    __param(1, (0, decorators_1.CampusId)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", void 0)
+], CommunicationsController.prototype, "sendFeeDefaultersToSelected", null);
 __decorate([
     (0, common_1.Get)('logs'),
     (0, swagger_1.ApiOperation)({ summary: 'Get communication logs' }),
@@ -216472,47 +216632,877 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.WhatsappService = void 0;
 const common_1 = __webpack_require__(47305);
 const prisma_service_1 = __webpack_require__(29105);
+const DEFAULT_TEMPLATE_BY_TRIGGER = {
+    ABSENT: 'attendance_alert',
+    FEE_DEFAULTER: 'fee_reminder',
+    ANNOUNCEMENT: 'school_announcement',
+};
+const DEFAULT_MESSAGE_PATTERN_BY_TRIGGER = {
+    ABSENT: 'Student was marked absent today.',
+    FEE_DEFAULTER: 'Fee payment is overdue. Please clear dues.',
+    ANNOUNCEMENT: 'School announcement.',
+};
+const DEFAULT_GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || 'v23.0';
+const DEFAULT_TEMPLATE_LANGUAGE = process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US';
+const DEFAULT_META_TIMEOUT_MS = Number(process.env.WHATSAPP_REQUEST_TIMEOUT_MS || 15000);
 let WhatsappService = WhatsappService_1 = class WhatsappService {
     prisma;
     logger = new common_1.Logger(WhatsappService_1.name);
     constructor(prisma) {
         this.prisma = prisma;
     }
-    async send(schoolId, dto, senderId, campusId) {
-        this.logger.log(`Sending WhatsApp to ${dto.to}: ${dto.message}`);
-        try {
-            // Mock WhatsApp sending
-            this.logger.log(`[MOCK] WhatsApp sent successfully to ${dto.to}`);
-            const log = await this.prisma.communicationLog.create({
-                data: {
-                    channel: 'WHATSAPP',
-                    recipient: dto.to,
-                    message: dto.message,
-                    status: 'SENT',
-                    schoolId,
-                    senderId,
-                    campusId: campusId || undefined,
-                    metadata: { provider: 'mock', templateId: dto.templateId },
+    validatePakistaniPhone(phone) {
+        if (!phone || !phone.trim()) {
+            return { isValid: false, normalizedPhone: null, reason: 'Number is missing' };
+        }
+        const digits = phone.replace(/[^\d]/g, '');
+        if (/^03\d{9}$/.test(digits)) {
+            return { isValid: true, normalizedPhone: `92${digits.slice(1)}`, reason: null };
+        }
+        if (/^3\d{9}$/.test(digits)) {
+            return { isValid: true, normalizedPhone: `92${digits}`, reason: null };
+        }
+        if (/^923\d{9}$/.test(digits)) {
+            return { isValid: true, normalizedPhone: digits, reason: null };
+        }
+        if (/^00923\d{9}$/.test(digits)) {
+            return { isValid: true, normalizedPhone: digits.slice(2), reason: null };
+        }
+        return {
+            isValid: false,
+            normalizedPhone: null,
+            reason: 'Use Pakistani mobile format like 03XXXXXXXXX',
+        };
+    }
+    readTriggerMessagePattern(trigger, triggerType) {
+        const metadata = trigger?.metadata;
+        if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+            const raw = metadata.messagePattern;
+            if (typeof raw === 'string' && raw.trim().length > 0) {
+                return raw;
+            }
+        }
+        return DEFAULT_MESSAGE_PATTERN_BY_TRIGGER[triggerType];
+    }
+    formatMessageWithPattern(pattern, values, fallbackMessage) {
+        const tokenAliases = {
+            student: 'studentName',
+            studentname: 'studentName',
+            firstname: 'firstName',
+            lastname: 'lastName',
+            class: 'classWithSection',
+            classwithsection: 'classWithSection',
+            classsection: 'classWithSection',
+            classname: 'className',
+            section: 'sectionName',
+            sectionname: 'sectionName',
+            date: 'date',
+            title: 'title',
+            message: 'message',
+            amount: 'amount',
+            overduedays: 'overdueDays',
+            school: 'schoolName',
+            schoolname: 'schoolName',
+            campus: 'campusName',
+            campusname: 'campusName',
+        };
+        const readValueByToken = (token) => {
+            const normalized = token.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const resolvedToken = tokenAliases[normalized] || token;
+            const value = values[resolvedToken];
+            if (value === undefined || value === null)
+                return null;
+            return String(value);
+        };
+        const renderedLegacy = pattern.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_match, token) => {
+            const value = readValueByToken(token);
+            return value ?? '';
+        });
+        const renderedFriendly = renderedLegacy.replace(/\[\s*([^\[\]]+?)\s*\]/g, (match, token) => {
+            const value = readValueByToken(token);
+            return value ?? match;
+        });
+        const compact = renderedFriendly.replace(/\s+/g, ' ').trim();
+        return compact.length > 0 ? compact : fallbackMessage;
+    }
+    buildTwoPartMessage(editablePart, details) {
+        const principalPart = (editablePart || '').replace(/\s+/g, ' ').trim();
+        const detailsPart = details
+            .map((detail) => ({
+            label: detail.label,
+            value: detail.value === undefined || detail.value === null
+                ? ''
+                : String(detail.value).replace(/\s+/g, ' ').trim(),
+        }))
+            .filter((detail) => detail.value.length > 0)
+            .map((detail) => `${detail.label}: ${detail.value}`);
+        const autoPart = detailsPart.length > 0 ? `Auto details:\n${detailsPart.join('\n')}` : '';
+        if (principalPart && autoPart)
+            return `${principalPart}\n\n${autoPart}`;
+        return principalPart || autoPart;
+    }
+    getUtcDayRange(date) {
+        const isDateInput = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date);
+        const targetDate = isDateInput ? date : new Date().toISOString().slice(0, 10);
+        return {
+            start: new Date(`${targetDate}T00:00:00.000Z`),
+            end: new Date(`${targetDate}T23:59:59.999Z`),
+        };
+    }
+    async getSchoolCampusContext(schoolId, campusId) {
+        const [school, campus] = await Promise.all([
+            this.prisma.school.findFirst({ where: { id: schoolId }, select: { name: true } }),
+            campusId
+                ? this.prisma.campus.findFirst({ where: { id: campusId, schoolId }, select: { name: true } })
+                : Promise.resolve(null),
+        ]);
+        return {
+            schoolName: school?.name || '',
+            campusName: campus?.name || '',
+        };
+    }
+    mapRecipientPhoneInfo(phone) {
+        const validation = this.validatePakistaniPhone(phone);
+        return {
+            studentPhone: phone || null,
+            studentPhoneNormalized: validation.normalizedPhone,
+            phoneValid: validation.isValid,
+            phoneValidationReason: validation.reason,
+        };
+    }
+    resolveAccessToken(config) {
+        return (config.accessToken || process.env.WHATSAPP_SYSTEM_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN || '').trim();
+    }
+    buildMetaGraphApiUrl(phoneNumberId) {
+        const graphApiVersion = (process.env.WHATSAPP_GRAPH_API_VERSION || DEFAULT_GRAPH_API_VERSION).trim();
+        return `https://graph.facebook.com/${graphApiVersion}/${phoneNumberId}/messages`;
+    }
+    buildTextMessagePayload(to, message) {
+        return {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to,
+            type: 'text',
+            text: {
+                body: message,
+            },
+        };
+    }
+    buildTemplateMessagePayload(to, templateName, message) {
+        const payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to,
+            type: 'template',
+            template: {
+                name: templateName,
+                language: {
+                    policy: 'deterministic',
+                    code: (process.env.WHATSAPP_TEMPLATE_LANGUAGE || DEFAULT_TEMPLATE_LANGUAGE).trim(),
                 },
+            },
+        };
+        const normalizedMessage = (message || '').trim();
+        if (normalizedMessage) {
+            ;
+            payload.template.components = [
+                {
+                    type: 'body',
+                    parameters: [{ type: 'text', text: normalizedMessage }],
+                },
+            ];
+        }
+        return payload;
+    }
+    getMetaErrorMessage(body, status) {
+        const metaError = body?.error;
+        if (!metaError)
+            return `Meta Graph API request failed with status ${status}`;
+        const details = [];
+        if (metaError.code)
+            details.push(`code=${metaError.code}`);
+        if (metaError.error_subcode)
+            details.push(`subcode=${metaError.error_subcode}`);
+        if (metaError.fbtrace_id)
+            details.push(`trace=${metaError.fbtrace_id}`);
+        const suffix = details.length > 0 ? ` (${details.join(', ')})` : '';
+        return `${metaError.message || 'Meta Graph API error'}${suffix}`;
+    }
+    async postToMetaGraphApi(endpoint, accessToken, payload) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), DEFAULT_META_TIMEOUT_MS);
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
             });
-            return { success: true, logId: log.id };
+            const body = (await response.json().catch(() => null));
+            if (!response.ok) {
+                throw new Error(this.getMetaErrorMessage(body, response.status));
+            }
+            return body || {};
         }
         catch (error) {
-            this.logger.error(`Failed to send WhatsApp: ${error.message}`);
+            if (error?.name === 'AbortError') {
+                throw new Error(`Meta Graph API request timed out after ${DEFAULT_META_TIMEOUT_MS}ms`);
+            }
+            throw error;
+        }
+        finally {
+            clearTimeout(timeout);
+        }
+    }
+    async getCampusConfig(schoolId, campusId) {
+        if (!campusId)
+            return null;
+        const prismaAny = this.prisma;
+        return prismaAny.whatsAppCampusConfig.findFirst({
+            where: { schoolId, campusId },
+        });
+    }
+    async upsertCampusConfig(schoolId, campusId, dto) {
+        const normalizedConfigNumber = dto.whatsappNumber
+            ? this.validatePakistaniPhone(dto.whatsappNumber)
+            : null;
+        if (normalizedConfigNumber && !normalizedConfigNumber.isValid) {
+            throw new common_1.BadRequestException(normalizedConfigNumber.reason || 'Invalid WhatsApp number format');
+        }
+        const prismaAny = this.prisma;
+        return prismaAny.whatsAppCampusConfig.upsert({
+            where: { campusId },
+            update: {
+                providerMode: dto.providerMode,
+                businessAccountId: dto.businessAccountId,
+                appId: dto.appId,
+                phoneNumberId: dto.phoneNumberId,
+                whatsappNumber: normalizedConfigNumber?.normalizedPhone || dto.whatsappNumber,
+                displayName: dto.displayName,
+                accessToken: dto.accessToken,
+                webhookVerifyToken: dto.webhookVerifyToken,
+                isVerified: dto.isVerified,
+                isActive: dto.isActive,
+                verifiedAt: dto.isVerified ? new Date() : undefined,
+            },
+            create: {
+                schoolId,
+                campusId,
+                providerMode: dto.providerMode ?? 'CENTRAL_WABA',
+                businessAccountId: dto.businessAccountId,
+                appId: dto.appId,
+                phoneNumberId: dto.phoneNumberId,
+                whatsappNumber: normalizedConfigNumber?.normalizedPhone || dto.whatsappNumber,
+                displayName: dto.displayName,
+                accessToken: dto.accessToken,
+                webhookVerifyToken: dto.webhookVerifyToken,
+                isVerified: dto.isVerified ?? false,
+                isActive: dto.isActive ?? false,
+                verifiedAt: dto.isVerified ? new Date() : undefined,
+                lastResetDate: new Date(),
+            },
+        });
+    }
+    async getTriggerRules(schoolId, campusId) {
+        const where = { schoolId };
+        if (campusId)
+            where.campusId = campusId;
+        const prismaAny = this.prisma;
+        return prismaAny.whatsAppTriggerRule.findMany({
+            where,
+            orderBy: { triggerType: 'asc' },
+        });
+    }
+    async upsertTriggerRule(schoolId, campusId, dto) {
+        const prismaAny = this.prisma;
+        return prismaAny.whatsAppTriggerRule.upsert({
+            where: {
+                schoolId_campusId_triggerType: {
+                    schoolId,
+                    campusId,
+                    triggerType: dto.triggerType,
+                },
+            },
+            update: {
+                isEnabled: dto.isEnabled,
+                templateName: dto.templateName,
+                cooldownHours: dto.cooldownHours,
+                minOutstandingAmount: dto.minOutstandingAmount,
+                minOverdueDays: dto.minOverdueDays,
+                metadata: dto.metadata,
+            },
+            create: {
+                schoolId,
+                campusId,
+                triggerType: dto.triggerType,
+                isEnabled: dto.isEnabled ?? true,
+                templateName: dto.templateName,
+                cooldownHours: dto.cooldownHours ?? 0,
+                minOutstandingAmount: dto.minOutstandingAmount,
+                minOverdueDays: dto.minOverdueDays,
+                metadata: dto.metadata,
+            },
+        });
+    }
+    async send(schoolId, dto, senderId, campusId) {
+        if (!campusId) {
+            throw new common_1.BadRequestException('Campus is required for WhatsApp sending');
+        }
+        const normalizedMessage = (dto.message || '').trim();
+        const templateName = dto.templateId?.trim() || undefined;
+        if (!templateName && !normalizedMessage) {
+            throw new common_1.BadRequestException('Message is required when no template is provided');
+        }
+        const config = await this.getCampusConfig(schoolId, campusId);
+        if (!config || !config.isActive || !config.isVerified || !config.phoneNumberId) {
+            throw new common_1.BadRequestException('WhatsApp is not configured/active for this campus');
+        }
+        const accessToken = this.resolveAccessToken(config);
+        if (!accessToken) {
+            throw new common_1.BadRequestException('WhatsApp access token is missing for this campus');
+        }
+        const endpoint = this.buildMetaGraphApiUrl(String(config.phoneNumberId));
+        const phoneValidation = this.validatePakistaniPhone(dto.to);
+        if (!phoneValidation.isValid || !phoneValidation.normalizedPhone) {
+            const reason = phoneValidation.reason || 'Invalid recipient number';
+            this.logger.warn(`Skipping WhatsApp send due to invalid number: ${dto.to} (${reason})`);
             await this.prisma.communicationLog.create({
                 data: {
                     channel: 'WHATSAPP',
                     recipient: dto.to,
                     message: dto.message,
                     status: 'FAILED',
-                    metadata: { error: error.message },
+                    metadata: { error: reason },
                     schoolId,
                     senderId,
                     campusId: campusId || undefined,
                 },
             });
-            return { success: false, error: error.message };
+            return { success: false, error: reason };
         }
+        const recipientNumber = phoneValidation.normalizedPhone;
+        this.logger.log(`Sending WhatsApp to ${recipientNumber}: ${normalizedMessage}`);
+        try {
+            let providerResponse = {};
+            let messageType = 'text';
+            let templateFallbackUsed = false;
+            let templateFallbackError = null;
+            if (templateName) {
+                messageType = 'template';
+                try {
+                    providerResponse = await this.postToMetaGraphApi(endpoint, accessToken, this.buildTemplateMessagePayload(recipientNumber, templateName, normalizedMessage));
+                }
+                catch (templateError) {
+                    if (!normalizedMessage)
+                        throw templateError;
+                    templateFallbackUsed = true;
+                    templateFallbackError = templateError?.message || 'Template send failed';
+                    this.logger.warn(`Template send failed for ${recipientNumber}. Falling back to text message: ${templateFallbackError}`);
+                    messageType = 'text';
+                    providerResponse = await this.postToMetaGraphApi(endpoint, accessToken, this.buildTextMessagePayload(recipientNumber, normalizedMessage));
+                }
+            }
+            else {
+                providerResponse = await this.postToMetaGraphApi(endpoint, accessToken, this.buildTextMessagePayload(recipientNumber, normalizedMessage));
+            }
+            const messageId = providerResponse.messages?.[0]?.id;
+            this.logger.log(`[META] WhatsApp sent successfully to ${recipientNumber} (type=${messageType})`);
+            const log = await this.prisma.communicationLog.create({
+                data: {
+                    channel: 'WHATSAPP',
+                    recipient: recipientNumber,
+                    message: normalizedMessage,
+                    status: 'SENT',
+                    schoolId,
+                    senderId,
+                    campusId: campusId || undefined,
+                    metadata: {
+                        provider: 'meta_cloud_api',
+                        templateId: templateName,
+                        messageType,
+                        messageId,
+                        graphApiVersion: process.env.WHATSAPP_GRAPH_API_VERSION || DEFAULT_GRAPH_API_VERSION,
+                        templateFallbackUsed,
+                        templateFallbackError,
+                        phoneNumberId: config.phoneNumberId,
+                        providerMode: config.providerMode,
+                        response: providerResponse,
+                    },
+                },
+            });
+            const prismaAny = this.prisma;
+            await prismaAny.whatsAppCampusConfig.update({
+                where: { campusId },
+                data: { messagesSentThisMonth: { increment: 1 } },
+            });
+            return { success: true, logId: log.id };
+        }
+        catch (error) {
+            const errorMessage = error?.message || 'Failed to send WhatsApp';
+            this.logger.error(`Failed to send WhatsApp: ${errorMessage}`);
+            await this.prisma.communicationLog.create({
+                data: {
+                    channel: 'WHATSAPP',
+                    recipient: recipientNumber,
+                    message: normalizedMessage,
+                    status: 'FAILED',
+                    metadata: {
+                        provider: 'meta_cloud_api',
+                        templateId: templateName,
+                        phoneNumberId: config.phoneNumberId,
+                        error: errorMessage,
+                    },
+                    schoolId,
+                    senderId,
+                    campusId: campusId || undefined,
+                },
+            });
+            return { success: false, error: errorMessage };
+        }
+    }
+    async sendAnnouncementToCampus(schoolId, campusId, dto, senderId) {
+        const prismaAny = this.prisma;
+        const trigger = await prismaAny.whatsAppTriggerRule.findUnique({
+            where: {
+                schoolId_campusId_triggerType: {
+                    schoolId,
+                    campusId,
+                    triggerType: 'ANNOUNCEMENT',
+                },
+            },
+        });
+        if (trigger && !trigger.isEnabled) {
+            return { success: true, sent: 0, skipped: 0, reason: 'Announcement trigger is disabled' };
+        }
+        const { schoolName, campusName } = await this.getSchoolCampusContext(schoolId, campusId);
+        const messagePattern = this.readTriggerMessagePattern(trigger, 'ANNOUNCEMENT');
+        const students = await this.prisma.student.findMany({
+            where: {
+                schoolId,
+                campusId,
+                deletedAt: null,
+                ...(dto.studentIds?.length ? { id: { in: dto.studentIds } } : {}),
+            },
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                phone: true,
+                class: { select: { name: true } },
+                section: { select: { name: true } },
+            },
+        });
+        let sent = 0;
+        let skipped = 0;
+        for (const student of students) {
+            const classWithSection = [student.class?.name, student.section?.name]
+                .filter((value) => !!value)
+                .join(' / ');
+            const fallbackMessage = `${dto.title ? `${dto.title}: ` : ''}${dto.message}`.trim();
+            const message = this.formatMessageWithPattern(messagePattern, {
+                title: dto.title || '',
+                message: dto.message,
+                studentName: `${student.firstName} ${student.lastName}`.trim(),
+                firstName: student.firstName,
+                lastName: student.lastName,
+                className: student.class?.name || '',
+                sectionName: student.section?.name || '',
+                classWithSection: classWithSection || 'Class not set',
+                schoolName,
+                campusName,
+            }, fallbackMessage);
+            const principalMessage = `${dto.title ? `${dto.title}: ` : ''}${dto.message || ''}`.trim() || message;
+            const safeMessage = this.buildTwoPartMessage(principalMessage, [
+                { label: 'Student', value: `${student.firstName} ${student.lastName}`.trim() },
+                { label: 'Class/Section', value: classWithSection || 'Class not set' },
+                { label: 'Campus', value: campusName || 'Campus not set' },
+                { label: 'School', value: schoolName || 'School not set' },
+            ]);
+            const result = await this.send(schoolId, {
+                to: student.phone || '',
+                templateId: trigger?.templateName || DEFAULT_TEMPLATE_BY_TRIGGER.ANNOUNCEMENT,
+                message: safeMessage,
+            }, senderId, campusId);
+            if (result.success)
+                sent++;
+            else
+                skipped++;
+        }
+        return { success: true, sent, skipped };
+    }
+    async processAbsentTriggers(schoolId, campusId, records, date) {
+        if (!campusId)
+            return;
+        const { schoolName, campusName } = await this.getSchoolCampusContext(schoolId, campusId);
+        const absentStudentIds = records
+            .filter((r) => String(r.status).toUpperCase() === 'ABSENT')
+            .map((r) => r.studentId);
+        if (absentStudentIds.length === 0)
+            return;
+        const prismaAny = this.prisma;
+        const trigger = await prismaAny.whatsAppTriggerRule.findUnique({
+            where: {
+                schoolId_campusId_triggerType: {
+                    schoolId,
+                    campusId,
+                    triggerType: 'ABSENT',
+                },
+            },
+        });
+        if (trigger && !trigger.isEnabled)
+            return;
+        const messagePattern = this.readTriggerMessagePattern(trigger, 'ABSENT');
+        const students = await this.prisma.student.findMany({
+            where: { schoolId, campusId, id: { in: absentStudentIds } },
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                phone: true,
+                class: { select: { name: true } },
+                section: { select: { name: true } },
+            },
+        });
+        for (const student of students) {
+            const classWithSection = [student.class?.name, student.section?.name]
+                .filter((value) => !!value)
+                .join(' / ');
+            const fallbackMessage = `${student.firstName} ${student.lastName} was marked absent on ${date}${classWithSection ? ` (${classWithSection})` : ''}.`;
+            const message = this.formatMessageWithPattern(messagePattern, {
+                studentName: `${student.firstName} ${student.lastName}`.trim(),
+                firstName: student.firstName,
+                lastName: student.lastName,
+                className: student.class?.name || '',
+                sectionName: student.section?.name || '',
+                classWithSection,
+                date,
+                schoolName,
+                campusName,
+            }, fallbackMessage);
+            const safeMessage = this.buildTwoPartMessage(message, [
+                { label: 'Student', value: `${student.firstName} ${student.lastName}`.trim() },
+                { label: 'Class/Section', value: classWithSection || 'Class not set' },
+                { label: 'Date', value: date },
+                { label: 'Campus', value: campusName || 'Campus not set' },
+                { label: 'School', value: schoolName || 'School not set' },
+            ]);
+            await this.send(schoolId, {
+                to: student.phone || '',
+                templateId: trigger?.templateName || DEFAULT_TEMPLATE_BY_TRIGGER.ABSENT,
+                message: safeMessage,
+            }, undefined, campusId);
+        }
+    }
+    async processFeeDefaulterTriggers(schoolId) {
+        const prismaAny = this.prisma;
+        const rules = await prismaAny.whatsAppTriggerRule.findMany({
+            where: {
+                schoolId,
+                triggerType: 'FEE_DEFAULTER',
+                isEnabled: true,
+            },
+            select: {
+                campusId: true,
+                templateName: true,
+                metadata: true,
+                minOutstandingAmount: true,
+                minOverdueDays: true,
+            },
+        });
+        const now = new Date();
+        for (const rule of rules) {
+            const { schoolName, campusName } = await this.getSchoolCampusContext(schoolId, rule.campusId);
+            const messagePattern = this.readTriggerMessagePattern({ metadata: rule.metadata }, 'FEE_DEFAULTER');
+            const overdueInvoices = await this.prisma.invoice.findMany({
+                where: {
+                    schoolId,
+                    status: { in: ['UNPAID', 'PARTIAL', 'OVERDUE'] },
+                    student: { campusId: rule.campusId },
+                },
+                select: {
+                    id: true,
+                    studentId: true,
+                    totalAmount: true,
+                    paidAmount: true,
+                    dueDate: true,
+                    student: {
+                        select: {
+                            firstName: true,
+                            lastName: true,
+                            phone: true,
+                            class: { select: { name: true } },
+                            section: { select: { name: true } },
+                        },
+                    },
+                },
+            });
+            for (const invoice of overdueInvoices) {
+                const outstanding = (invoice.totalAmount || 0) - (invoice.paidAmount || 0);
+                const overdueDays = Math.max(0, Math.floor((now.getTime() - new Date(invoice.dueDate).getTime()) / (1000 * 60 * 60 * 24)));
+                if ((rule.minOutstandingAmount || 0) > outstanding)
+                    continue;
+                if ((rule.minOverdueDays || 0) > overdueDays)
+                    continue;
+                const classWithSection = [invoice.student.class?.name, invoice.student.section?.name]
+                    .filter((value) => !!value)
+                    .join(' / ');
+                const fallbackMessage = `Fee reminder for ${invoice.student.firstName} ${invoice.student.lastName}: PKR ${outstanding} is overdue by ${overdueDays} day(s).`;
+                const message = this.formatMessageWithPattern(messagePattern, {
+                    studentName: `${invoice.student.firstName} ${invoice.student.lastName}`.trim(),
+                    firstName: invoice.student.firstName,
+                    lastName: invoice.student.lastName,
+                    className: invoice.student.class?.name || '',
+                    sectionName: invoice.student.section?.name || '',
+                    classWithSection: classWithSection || 'Class not set',
+                    amount: outstanding,
+                    overdueDays,
+                    schoolName,
+                    campusName,
+                }, fallbackMessage);
+                const safeMessage = this.buildTwoPartMessage(message, [
+                    { label: 'Student', value: `${invoice.student.firstName} ${invoice.student.lastName}`.trim() },
+                    { label: 'Class/Section', value: classWithSection || 'Class not set' },
+                    { label: 'Outstanding', value: `PKR ${outstanding}` },
+                    { label: 'Overdue', value: `${overdueDays} day(s)` },
+                    { label: 'Campus', value: campusName || 'Campus not set' },
+                    { label: 'School', value: schoolName || 'School not set' },
+                ]);
+                await this.send(schoolId, {
+                    to: invoice.student.phone || '',
+                    templateId: rule.templateName || DEFAULT_TEMPLATE_BY_TRIGGER.FEE_DEFAULTER,
+                    message: safeMessage,
+                }, undefined, rule.campusId);
+            }
+        }
+    }
+    async getAbsenteeCandidates(schoolId, campusId, date) {
+        const { start, end } = this.getUtcDayRange(date);
+        const rows = await this.prisma.attendance.findMany({
+            where: {
+                schoolId,
+                status: 'ABSENT',
+                date: { gte: start, lte: end },
+                student: { campusId, deletedAt: null },
+            },
+            select: {
+                studentId: true,
+                date: true,
+                student: {
+                    select: {
+                        id: true,
+                        firstName: true,
+                        lastName: true,
+                        rollNumber: true,
+                        phone: true,
+                        class: { select: { name: true } },
+                        section: { select: { name: true } },
+                    },
+                },
+            },
+            orderBy: { student: { rollNumber: 'asc' } },
+        });
+        return rows.map((row) => ({
+            studentId: row.student.id,
+            fullName: `${row.student.firstName} ${row.student.lastName}`.trim(),
+            rollNumber: row.student.rollNumber,
+            ...this.mapRecipientPhoneInfo(row.student.phone),
+            className: row.student.class?.name || null,
+            sectionName: row.student.section?.name || null,
+            date: row.date,
+        }));
+    }
+    async getAnnouncementCandidates(schoolId, campusId) {
+        const students = await this.prisma.student.findMany({
+            where: {
+                schoolId,
+                campusId,
+                deletedAt: null,
+            },
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                rollNumber: true,
+                phone: true,
+                class: { select: { name: true } },
+                section: { select: { name: true } },
+            },
+            orderBy: { rollNumber: 'asc' },
+        });
+        return students.map((student) => ({
+            studentId: student.id,
+            fullName: `${student.firstName} ${student.lastName}`.trim(),
+            rollNumber: student.rollNumber,
+            ...this.mapRecipientPhoneInfo(student.phone),
+            className: student.class?.name || null,
+            sectionName: student.section?.name || null,
+        }));
+    }
+    async sendAbsenteeToSelected(schoolId, campusId, dto, senderId) {
+        if (!dto.studentIds?.length)
+            return { success: true, sent: 0, skipped: 0 };
+        const prismaAny = this.prisma;
+        const trigger = await prismaAny.whatsAppTriggerRule.findUnique({
+            where: {
+                schoolId_campusId_triggerType: {
+                    schoolId,
+                    campusId,
+                    triggerType: 'ABSENT',
+                },
+            },
+        });
+        const candidates = await this.getAbsenteeCandidates(schoolId, campusId, dto.date);
+        const selected = candidates.filter((c) => dto.studentIds.includes(c.studentId));
+        const { schoolName, campusName } = await this.getSchoolCampusContext(schoolId, campusId);
+        const messagePattern = this.readTriggerMessagePattern(trigger, 'ABSENT');
+        let sent = 0;
+        let skipped = 0;
+        for (const student of selected) {
+            const classWithSection = [student.className, student.sectionName]
+                .filter((value) => !!value)
+                .join(' / ');
+            const fallbackMessage = `${student.fullName} was marked absent on ${new Date(student.date || new Date()).toLocaleDateString()}${student.className ? ` (${student.className})` : ''}.`;
+            const message = this.formatMessageWithPattern(messagePattern, {
+                studentName: student.fullName,
+                firstName: student.fullName.split(' ')[0] || student.fullName,
+                lastName: student.fullName.split(' ').slice(1).join(' '),
+                className: student.className || '',
+                sectionName: student.sectionName || '',
+                classWithSection: classWithSection || 'Class not set',
+                date: student.date ? new Date(student.date).toLocaleDateString() : '',
+                schoolName,
+                campusName,
+            }, fallbackMessage);
+            const safeMessage = this.buildTwoPartMessage(message, [
+                { label: 'Student', value: student.fullName },
+                { label: 'Class/Section', value: classWithSection || 'Class not set' },
+                { label: 'Date', value: student.date ? new Date(student.date).toLocaleDateString() : '' },
+                { label: 'Campus', value: campusName || 'Campus not set' },
+                { label: 'School', value: schoolName || 'School not set' },
+            ]);
+            const result = await this.send(schoolId, {
+                to: student.studentPhone || '',
+                templateId: trigger?.templateName || DEFAULT_TEMPLATE_BY_TRIGGER.ABSENT,
+                message: safeMessage,
+            }, senderId, campusId);
+            if (result.success)
+                sent++;
+            else
+                skipped++;
+        }
+        return { success: true, sent, skipped, totalCandidates: candidates.length };
+    }
+    async getFeeDefaulterCandidates(schoolId, campusId, dto) {
+        const now = new Date();
+        const invoices = await this.prisma.invoice.findMany({
+            where: {
+                schoolId,
+                status: { in: ['UNPAID', 'PARTIAL', 'OVERDUE'] },
+                student: { campusId, deletedAt: null },
+            },
+            select: {
+                studentId: true,
+                totalAmount: true,
+                paidAmount: true,
+                dueDate: true,
+                student: {
+                    select: {
+                        id: true,
+                        firstName: true,
+                        lastName: true,
+                        rollNumber: true,
+                        phone: true,
+                        class: { select: { name: true } },
+                        section: { select: { name: true } },
+                    },
+                },
+            },
+        });
+        const byStudent = new Map();
+        for (const invoice of invoices) {
+            const overdueDays = Math.max(0, Math.floor((now.getTime() - new Date(invoice.dueDate).getTime()) / (1000 * 60 * 60 * 24)));
+            const outstanding = (invoice.totalAmount || 0) - (invoice.paidAmount || 0);
+            if (outstanding <= 0)
+                continue;
+            const existing = byStudent.get(invoice.studentId);
+            if (!existing) {
+                byStudent.set(invoice.studentId, {
+                    studentId: invoice.student.id,
+                    fullName: `${invoice.student.firstName} ${invoice.student.lastName}`.trim(),
+                    rollNumber: invoice.student.rollNumber,
+                    ...this.mapRecipientPhoneInfo(invoice.student.phone),
+                    className: invoice.student.class?.name || null,
+                    sectionName: invoice.student.section?.name || null,
+                    outstandingAmount: outstanding,
+                    maxOverdueDays: overdueDays,
+                });
+                continue;
+            }
+            existing.outstandingAmount += outstanding;
+            existing.maxOverdueDays = Math.max(existing.maxOverdueDays, overdueDays);
+        }
+        const minOutstandingAmount = dto?.minOutstandingAmount ?? 0;
+        const minOverdueDays = dto?.minOverdueDays ?? 0;
+        return Array.from(byStudent.values()).filter((row) => row.outstandingAmount >= minOutstandingAmount && row.maxOverdueDays >= minOverdueDays);
+    }
+    async sendFeeDefaulterToSelected(schoolId, campusId, dto, senderId) {
+        if (!dto.studentIds?.length)
+            return { success: true, sent: 0, skipped: 0 };
+        const prismaAny = this.prisma;
+        const trigger = await prismaAny.whatsAppTriggerRule.findUnique({
+            where: {
+                schoolId_campusId_triggerType: {
+                    schoolId,
+                    campusId,
+                    triggerType: 'FEE_DEFAULTER',
+                },
+            },
+        });
+        const candidates = await this.getFeeDefaulterCandidates(schoolId, campusId, dto);
+        const selected = candidates.filter((c) => dto.studentIds.includes(c.studentId));
+        const { schoolName, campusName } = await this.getSchoolCampusContext(schoolId, campusId);
+        const messagePattern = this.readTriggerMessagePattern(trigger, 'FEE_DEFAULTER');
+        let sent = 0;
+        let skipped = 0;
+        for (const student of selected) {
+            const fallbackMessage = `Fee reminder for ${student.fullName}: PKR ${student.outstandingAmount} is overdue by ${student.maxOverdueDays} day(s).`;
+            const classWithSection = [student.className, student.sectionName]
+                .filter((value) => !!value)
+                .join(' / ');
+            const message = this.formatMessageWithPattern(messagePattern, {
+                studentName: student.fullName,
+                firstName: student.fullName.split(' ')[0] || student.fullName,
+                lastName: student.fullName.split(' ').slice(1).join(' '),
+                className: student.className || '',
+                sectionName: student.sectionName || '',
+                classWithSection: classWithSection || 'Class not set',
+                amount: student.outstandingAmount,
+                overdueDays: student.maxOverdueDays,
+                schoolName,
+                campusName,
+            }, fallbackMessage);
+            const safeMessage = this.buildTwoPartMessage(message, [
+                { label: 'Student', value: student.fullName },
+                { label: 'Class/Section', value: classWithSection || 'Class not set' },
+                { label: 'Outstanding', value: `PKR ${student.outstandingAmount}` },
+                { label: 'Overdue', value: `${student.maxOverdueDays} day(s)` },
+                { label: 'Campus', value: campusName || 'Campus not set' },
+                { label: 'School', value: schoolName || 'School not set' },
+            ]);
+            const result = await this.send(schoolId, {
+                to: student.studentPhone || '',
+                templateId: trigger?.templateName || DEFAULT_TEMPLATE_BY_TRIGGER.FEE_DEFAULTER,
+                message: safeMessage,
+            }, senderId, campusId);
+            if (result.success)
+                sent++;
+            else
+                skipped++;
+        }
+        return { success: true, sent, skipped, totalCandidates: candidates.length };
     }
 };
 exports.WhatsappService = WhatsappService;
@@ -219549,17 +220539,20 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 var FinanceCronService_1;
-var _a;
+var _a, _b;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FinanceCronService = void 0;
 const common_1 = __webpack_require__(47305);
 const schedule_1 = __webpack_require__(50940);
 const prisma_service_1 = __webpack_require__(29105);
+const whatsapp_service_1 = __webpack_require__(39126);
 let FinanceCronService = FinanceCronService_1 = class FinanceCronService {
     prisma;
+    whatsappService;
     logger = new common_1.Logger(FinanceCronService_1.name);
-    constructor(prisma) {
+    constructor(prisma, whatsappService) {
         this.prisma = prisma;
+        this.whatsappService = whatsappService;
     }
     /**
      * Calculate discounted total from a fee amount and student's discount settings.
@@ -219638,6 +220631,13 @@ let FinanceCronService = FinanceCronService_1 = class FinanceCronService {
         });
         if (result.count > 0) {
             this.logger.log(`Marked ${result.count} invoices as OVERDUE`);
+        }
+        const schools = await this.prisma.school.findMany({
+            where: { isActive: true },
+            select: { id: true },
+        });
+        for (const school of schools) {
+            await this.whatsappService.processFeeDefaulterTriggers(school.id);
         }
     }
     // ═══════════════════════════════════════════════════════════════
@@ -220177,7 +221177,7 @@ __decorate([
 ], FinanceCronService.prototype, "generateAnnualInvoices", null);
 exports.FinanceCronService = FinanceCronService = FinanceCronService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object])
+    __metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaService !== "undefined" && prisma_service_1.PrismaService) === "function" ? _a : Object, typeof (_b = typeof whatsapp_service_1.WhatsappService !== "undefined" && whatsapp_service_1.WhatsappService) === "function" ? _b : Object])
 ], FinanceCronService);
 
 
@@ -220812,12 +221812,13 @@ const schedule_1 = __webpack_require__(50940);
 const finance_controller_1 = __webpack_require__(99472);
 const finance_service_1 = __webpack_require__(20733);
 const finance_cron_service_1 = __webpack_require__(18760);
+const communications_module_1 = __webpack_require__(50892);
 let FinanceModule = class FinanceModule {
 };
 exports.FinanceModule = FinanceModule;
 exports.FinanceModule = FinanceModule = __decorate([
     (0, common_1.Module)({
-        imports: [schedule_1.ScheduleModule.forRoot()],
+        imports: [schedule_1.ScheduleModule.forRoot(), communications_module_1.CommunicationsModule],
         controllers: [finance_controller_1.FinanceController],
         providers: [finance_service_1.FinanceService, finance_cron_service_1.FinanceCronService],
         exports: [finance_service_1.FinanceService, finance_cron_service_1.FinanceCronService],

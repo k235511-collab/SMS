@@ -128,6 +128,17 @@ export class CommunicationsController {
     return this.whatsappService.getAbsenteeCandidates(schoolId, campusId, date)
   }
 
+  @Get('whatsapp/recipients/announcements')
+  @ApiOperation({ summary: 'Get announcement recipient list for selected campus' })
+  @RequirePermission(Permission.READ_COMMUNICATION)
+  getAnnouncementRecipients(
+    @TenantId() schoolId: string,
+    @CampusId() campusId: string | undefined,
+  ) {
+    if (!campusId) throw new BadRequestException('Campus is required')
+    return this.whatsappService.getAnnouncementCandidates(schoolId, campusId)
+  }
+
   @Post('whatsapp/send/absentees')
   @ApiOperation({ summary: 'Send absentee WhatsApp to selected students only' })
   @RequirePermission(Permission.CREATE_COMMUNICATION)

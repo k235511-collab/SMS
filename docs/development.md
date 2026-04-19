@@ -37,6 +37,10 @@ Backend envs to populate first:
 - if browser code needs Supabase values, set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` in frontend public envs
 - if both backend and frontend use Supabase, set both server and client env pairs (`SUPABASE_URL` + `SUPABASE_PUBLISHABLE_DEFAULT_KEY` and `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`) and remember publishable keys are public by design
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `WHATSAPP_SYSTEM_TOKEN` (fallback token if campus config does not store an access token)
+- `WHATSAPP_GRAPH_API_VERSION` (optional; default `v23.0`)
+- `WHATSAPP_TEMPLATE_LANGUAGE` (optional; default `en_US`)
+- `WHATSAPP_REQUEST_TIMEOUT_MS` (optional; default `15000`)
 
 ## Database Setup
 
@@ -121,3 +125,13 @@ Rules enforced by backend:
 - for Supabase on Vercel, use the transaction pooler URL for `DATABASE_URL` and the direct host for `DIRECT_DATABASE_URL`
 - for transaction-pooler `DATABASE_URL` values (typically port `6543`), add `pgbouncer=true` as a query parameter by appending `?pgbouncer=true` or `&pgbouncer=true` if other query params already exist
 - keep `DIRECT_DATABASE_URL` pointed at the direct database host and do not add `pgbouncer=true` to `DIRECT_DATABASE_URL`
+
+## WhatsApp Communications Notes
+
+- Current communications implementation is documented in `Prompts/whatsapp-multi-school-integration.md` under **Current Product Implementation (April 2026)**.
+- Send flow now includes:
+	- recipient selection table
+	- recipient search and class/section filtering controls
+	- class/section bulk selection and clear actions
+	- send confirmation dialog
+	- settings-incomplete modal dialog that opens before send when required WhatsApp fields are missing

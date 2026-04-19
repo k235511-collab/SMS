@@ -3,20 +3,141 @@
 
 ---
 
+## ⚠️ Status Note (April 2026)
+
+This file contains both:
+
+- **Current implementation details** (source of truth for this repository)
+- **Legacy planning/reference examples** from earlier design drafts
+
+If there is any conflict, follow **Current Product Implementation (April 2026)** below.
+
+---
+
 ## 📌 Table of Contents
 
-1. [Overview & Architecture](#overview)
-2. [One-Time Meta Setup (You)](#meta-setup)
-3. [Database Schema](#database)
-4. [School Onboarding Flow](#onboarding)
-5. [Backend APIs](#backend-apis)
-6. [Frontend UI](#frontend)
-7. [Sending Notifications](#sending)
-8. [Message Templates](#templates)
-9. [Usage Tracking](#tracking)
-10. [Security](#security)
-11. [Cost Breakdown](#cost)
-12. [Environment Variables](#env)
+1. [Current Product Implementation (April 2026)](#current-implementation)
+2. [Overview & Architecture (Legacy)](#overview)
+3. [One-Time Meta Setup (Legacy)](#meta-setup)
+4. [Database Schema (Legacy)](#database)
+5. [School Onboarding Flow (Legacy)](#onboarding)
+6. [Backend APIs (Legacy)](#backend-apis)
+7. [Frontend UI (Legacy)](#frontend)
+8. [Sending Notifications (Legacy)](#sending)
+9. [Message Templates (Legacy)](#templates)
+10. [Usage Tracking (Legacy)](#tracking)
+11. [Security (Legacy)](#security)
+12. [Cost Breakdown (Legacy)](#cost)
+13. [Environment Variables (Legacy)](#env)
+
+---
+
+## 1. Current Product Implementation (April 2026) {#current-implementation}
+
+### What Is Live Now
+
+- Channel strategy is **WhatsApp-first** for communications in this flow.
+- SMS and Email endpoints exist but are intentionally blocked in backend with clear errors.
+- Sending uses **real Meta Cloud API integration** (no mock provider path).
+- Recipient phone source in current implementation is **student phone** (`student.phone`) and is validated/normalized before send.
+- UI supports three trigger types:
+  - `ABSENT`
+  - `FEE_DEFAULTER`
+  - `ANNOUNCEMENT`
+
+### Real Backend Endpoints (Implemented)
+
+Base: `/communications`
+
+- `POST /whatsapp`
+- `GET /whatsapp/config`
+- `POST /whatsapp/config`
+- `GET /whatsapp/triggers`
+- `POST /whatsapp/triggers`
+- `POST /whatsapp/announcement`
+- `GET /whatsapp/recipients/absentees`
+- `GET /whatsapp/recipients/announcements`
+- `POST /whatsapp/send/absentees`
+- `GET /whatsapp/recipients/fee-defaulters`
+- `POST /whatsapp/send/fee-defaulters`
+- `GET /logs`
+
+### Frontend Flow (Implemented)
+
+Page route:
+
+- `apps/frontend/src/app/(dashboard)/dashboard/communications/page.tsx`
+
+Active UX behavior:
+
+- Single communications workspace with two tabs:
+  - **Send messages**
+  - **Recent messages**
+- Trigger setup section is now labeled **Chat** for clearer non-technical wording.
+- Message composition follows **two-part structure**:
+  - **Part 1:** principal editable text
+  - **Part 2:** system-controlled auto details
+- Recipient tables include selection, validation state, and a selected-only send flow.
+- Recipient selection UX now includes:
+  - student search (name, roll number, phone, class, section)
+  - class filter + section filter
+  - bulk action for **Select class/section**
+  - bulk action for **Clear class/section**
+  - visible-count and selected-count indicators
+
+### Modal-Based Error Behavior (Implemented)
+
+When WhatsApp settings are incomplete and the user presses **Send to selected**:
+
+- The app opens a **confirmation-style error dialog** (not only inline helper text).
+- The dialog lists missing fields.
+- User can click **Open WhatsApp settings** directly from the dialog.
+
+Component:
+
+- `apps/frontend/src/components/communications/settings-incomplete-dialog.tsx`
+
+### Send Safety Guardrails (Implemented)
+
+- Pre-send settings validation runs before confirmation.
+- If selected recipients have invalid numbers, they are skipped and shown in preview/confirmation context.
+- Send confirmation modal is used before dispatch.
+- Communications logs record sent and failed status.
+
+### Message Assembly Model (Implemented)
+
+Backend composes a safe final message using:
+
+- Editable principal message
+- Auto-appended detail block (`Auto details:`)
+
+This prevents accidental deletion of required context fields and keeps template payloads structured.
+
+Core service file:
+
+- `apps/backend/src/modules/communications/whatsapp.service.ts`
+
+### Backend Environment Variables (Current)
+
+Defined in backend env example:
+
+- `WHATSAPP_SYSTEM_TOKEN`
+- `WHATSAPP_GRAPH_API_VERSION` (default `v23.0`)
+- `WHATSAPP_TEMPLATE_LANGUAGE` (default `en_US`)
+- `WHATSAPP_REQUEST_TIMEOUT_MS` (default `15000`)
+
+### Quick QA Checklist (Current)
+
+1. Open communications page and select recipients.
+2. Confirm Chat heading is visible above trigger tabs.
+3. Use search to narrow recipient list by student name/roll/phone.
+4. Apply class and section filters, then use **Select class/section**.
+5. Keep one required setting missing.
+6. Click **Send to selected**.
+7. Confirm that the **settings incomplete modal** opens.
+8. Click **Open WhatsApp settings** and complete required fields.
+9. Retry send and confirm send confirmation dialog appears.
+10. Send and verify entry appears in **Recent messages**.
 
 ---
 
@@ -1085,4 +1206,4 @@ Student marked absent
 ---
 
 *Generated for SMS SaaS Platform — Multi-Tenant Educational SaaS*
-*Last Updated: February 2026*
+*Last Updated: April 2026*

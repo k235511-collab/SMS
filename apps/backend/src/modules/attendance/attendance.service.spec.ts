@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing'
 import { AttendanceService } from './attendance.service'
 import { PrismaService } from '../../prisma/prisma.service'
 import { TeacherScopeService } from '../teachers/teacher-scope.service'
+import { WhatsappService } from '../communications/whatsapp.service'
 
 describe('AttendanceService', () => {
   let service: AttendanceService
@@ -15,6 +16,9 @@ describe('AttendanceService', () => {
   let teacherScopeService: {
     getScope: jest.Mock
     validateClassTeacherAccess: jest.Mock
+  }
+  let whatsappService: {
+    processAbsentTriggers: jest.Mock
   }
 
   beforeEach(async () => {
@@ -30,11 +34,16 @@ describe('AttendanceService', () => {
       validateClassTeacherAccess: jest.fn(),
     }
 
+    whatsappService = {
+      processAbsentTriggers: jest.fn(),
+    }
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AttendanceService,
         { provide: PrismaService, useValue: prisma },
         { provide: TeacherScopeService, useValue: teacherScopeService },
+        { provide: WhatsappService, useValue: whatsappService },
       ],
     }).compile()
 
