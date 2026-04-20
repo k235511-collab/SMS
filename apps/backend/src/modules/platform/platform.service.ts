@@ -22,6 +22,7 @@ import {
 import * as bcrypt from 'bcryptjs'
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
+import { assertSchoolAccessOrThrow } from '../../common/policies/school-access.policy'
 
 @Injectable()
 export class PlatformService {
@@ -523,9 +524,12 @@ export class PlatformService {
   async impersonateSchool(schoolId: string) {
     const school = await this.findSchoolById(schoolId)
 
-    if (!school.isActive) {
-      throw new ForbiddenException('Cannot impersonate a suspended school')
-    }
+    assertSchoolAccessOrThrow({
+      schoolId: school.id,
+      schoolName: school.name,
+      isActive: school.isActive,
+      subscriptionExpiresAt: school.subscriptionExpiresAt,
+    })
 
     // Find the super_admin user for this school
     const adminRole = await this.prisma.role.findFirst({

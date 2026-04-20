@@ -1,9 +1,10 @@
 'use client'
 
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/context/auth-context'
+import { AuthError } from '@/services/auth.service'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardBody } from '@/components/ui/card'
@@ -16,10 +17,41 @@ function LoginForm() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
-  const { login, loginWithGoogle } = useAuth()
+  const { login, loginWithGoogle, isAuthenticated, isLoading: authLoading, user } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard'
+
+  useEffect(() => {
+    if (authLoading || !isAuthenticated) return
+
+    if (user?.isPlatformAdmin) {
+      router.replace('/platform')
+      return
+    }
+
+    router.replace(callbackUrl)
+  }, [authLoading, isAuthenticated, user, router, callbackUrl])
+
+  function redirectToAccessBlocked(error: AuthError) {
+    const params = new URLSearchParams()
+    params.set('code', error.code || 'PLAN_EXPIRED')
+    if (error.message) {
+      params.set('message', error.message)
+    }
+
+    const schoolName = error.meta?.schoolName
+    if (typeof schoolName === 'string' && schoolName.length > 0) {
+      params.set('schoolName', schoolName)
+    }
+
+    const expiry = error.meta?.subscriptionExpiresAt
+    if (typeof expiry === 'string' && expiry.length > 0) {
+      params.set('expiry', expiry)
+    }
+
+    router.push(`/plan-expired?${params.toString()}`)
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -34,6 +66,13 @@ function LoginForm() {
         router.push(callbackUrl)
       }
     } catch (err) {
+      if (
+        err instanceof AuthError &&
+        (err.code === 'PLAN_EXPIRED' || err.code === 'SCHOOL_SUSPENDED')
+      ) {
+        redirectToAccessBlocked(err)
+        return
+      }
       setError(err instanceof Error ? err.message : 'Login failed. Please try again.')
     } finally {
       setIsLoading(false)
@@ -52,6 +91,13 @@ function LoginForm() {
         router.push(callbackUrl)
       }
     } catch (err) {
+      if (
+        err instanceof AuthError &&
+        (err.code === 'PLAN_EXPIRED' || err.code === 'SCHOOL_SUSPENDED')
+      ) {
+        redirectToAccessBlocked(err)
+        return
+      }
       setError(err instanceof Error ? err.message : 'Google Login failed. Please try again.')
     } finally {
       setIsLoading(false)

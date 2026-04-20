@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import Cookies from 'js-cookie'
-import { authService } from '@/services/auth.service'
+import { authService, AuthError } from '@/services/auth.service'
 import env from '@/lib/env'
 import { tryRefresh } from '@/lib/api-client'
 import type {
@@ -48,6 +48,12 @@ interface AuthContextValue extends AuthState {
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
+const PUBLIC_PATHS = new Set(['/', '/login', '/register', '/forgot-password', '/plan-expired'])
+
+function isPublicPathname(pathname?: string): boolean {
+  if (!pathname) return false
+  return PUBLIC_PATHS.has(pathname)
+}
 
 // ─── Provider ───────────────────────────────────────────────────────────────
 
@@ -56,6 +62,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [permissions, setPermissions] = useState<PermissionSlug[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const redirectToAccessBlocked = useCallback((error: AuthError) => {
+    authService.clearSession()
+    setUser(null)
+    setPermissions([])
+
+    if (typeof window === 'undefined') return
+
+    const params = new URLSearchParams()
+    const code = error.code || 'PLAN_EXPIRED'
+    params.set('code', code)
+    if (error.message) {
+      params.set('message', error.message)
+    }
+
+    const schoolName = error.meta?.schoolName
+    if (typeof schoolName === 'string' && schoolName.length > 0) {
+      params.set('schoolName', schoolName)
+    }
+
+    const expiry = error.meta?.subscriptionExpiresAt
+    if (typeof expiry === 'string' && expiry.length > 0) {
+      params.set('expiry', expiry)
+    }
+
+    window.location.href = `/plan-expired?${params.toString()}`
+  }, [])
 
   // ── Proactive token refresh — runs every 13 minutes ──
   // Refreshes the access token 2 minutes before its 15-minute expiry
@@ -91,7 +124,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
 
     async function bootstrap() {
-      const hasAccessToken = authService.isLoggedIn()
+      const pathname = typeof window !== 'undefined' ? window.location.pathname : ''
+      const onPublicRoute = isPublicPathname(pathname)
+      const hasAccessToken = !!Cookies.get(env.ACCESS_TOKEN_COOKIE)
       const hasRefreshToken = !!Cookies.get(env.REFRESH_TOKEN_COOKIE)
 
       // No tokens at all — not logged in
@@ -125,10 +160,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           startProactiveRefresh()
         } else {
           // Token is invalid / expired
-          authService.logout()
+          authService.clearSession()
+          setUser(null)
+          setPermissions([])
+          if (!onPublicRoute) {
+            authService.logout()
+          }
         }
-      } catch {
-        if (!cancelled) authService.logout()
+      } catch (error) {
+        if (
+          !cancelled &&
+          error instanceof AuthError &&
+          (error.code === 'PLAN_EXPIRED' || error.code === 'SCHOOL_SUSPENDED')
+        ) {
+          if (onPublicRoute) {
+            authService.clearSession()
+            setUser(null)
+            setPermissions([])
+            return
+          }
+          redirectToAccessBlocked(error)
+          return
+        }
+
+        if (!cancelled) {
+          authService.clearSession()
+          setUser(null)
+          setPermissions([])
+          if (!onPublicRoute) {
+            authService.logout()
+          }
+        }
       } finally {
         if (!cancelled) setIsLoading(false)
       }
@@ -143,7 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshIntervalRef.current = null
       }
     }
-  }, [startProactiveRefresh])
+  }, [startProactiveRefresh, redirectToAccessBlocked])
 
   // ── Login ──
   const login = useCallback(async (credentials: LoginCredentials) => {
@@ -197,9 +259,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(me)
       }
     } catch (error) {
+      if (
+        error instanceof AuthError &&
+        (error.code === 'PLAN_EXPIRED' || error.code === 'SCHOOL_SUSPENDED')
+      ) {
+        redirectToAccessBlocked(error)
+        return
+      }
       console.error('Failed to refresh user:', error)
     }
-  }, [])
+  }, [redirectToAccessBlocked])
 
   // ── Update User Locally ──
   const updateUser = useCallback((data: Partial<AuthUser>) => {
@@ -208,11 +277,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── Switch School ──
   const switchSchool = useCallback(async (schoolId: string) => {
-    const me = await authService.switchSchool(schoolId)
-    setUser(me)
-    const perms = await authService.getMyPermissions()
-    setPermissions(perms)
-  }, [])
+    try {
+      const me = await authService.switchSchool(schoolId)
+      setUser(me)
+      const perms = await authService.getMyPermissions()
+      setPermissions(perms)
+    } catch (error) {
+      if (
+        error instanceof AuthError &&
+        (error.code === 'PLAN_EXPIRED' || error.code === 'SCHOOL_SUSPENDED')
+      ) {
+        redirectToAccessBlocked(error)
+        return
+      }
+      throw error
+    }
+  }, [redirectToAccessBlocked])
 
   // ── Permission helpers ──
   const hasPermission = useCallback(

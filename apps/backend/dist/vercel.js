@@ -210820,6 +210820,8 @@ let GlobalExceptionFilter = GlobalExceptionFilter_1 = class GlobalExceptionFilte
         let status = common_1.HttpStatus.INTERNAL_SERVER_ERROR;
         let message = 'Internal server error';
         let errors;
+        let code;
+        let meta;
         if (exception instanceof common_1.HttpException) {
             status = exception.getStatus();
             const exResponse = exception.getResponse();
@@ -210829,6 +210831,11 @@ let GlobalExceptionFilter = GlobalExceptionFilter_1 = class GlobalExceptionFilte
             else if (typeof exResponse === 'object') {
                 const obj = exResponse;
                 message = obj.message || exception.message;
+                code = typeof obj.code === 'string' ? obj.code : undefined;
+                meta =
+                    obj.meta && typeof obj.meta === 'object' && !Array.isArray(obj.meta)
+                        ? obj.meta
+                        : undefined;
                 // Handle class-validator errors — include details in message
                 if (Array.isArray(obj.message)) {
                     const validationErrors = obj.message;
@@ -210840,6 +210847,8 @@ let GlobalExceptionFilter = GlobalExceptionFilter_1 = class GlobalExceptionFilte
             if (status >= 500) {
                 message = 'Something went wrong. Please try again later.';
                 errors = undefined;
+                code = undefined;
+                meta = undefined;
             }
         }
         else if (exception instanceof Error) {
@@ -210851,6 +210860,8 @@ let GlobalExceptionFilter = GlobalExceptionFilter_1 = class GlobalExceptionFilte
             success: false,
             statusCode: status,
             message,
+            code,
+            meta,
             errors,
             path: request.url,
             method: request.method,
@@ -211219,6 +211230,7 @@ exports.TenantGuard = void 0;
 const common_1 = __webpack_require__(47305);
 const prisma_service_1 = __webpack_require__(29105);
 const context_1 = __webpack_require__(89347);
+const school_access_policy_1 = __webpack_require__(87203);
 let TenantGuard = class TenantGuard {
     prisma;
     constructor(prisma) {
@@ -211242,14 +211254,22 @@ let TenantGuard = class TenantGuard {
         }
         const school = await this.prisma.school.findUnique({
             where: { id: schoolId },
-            select: { id: true, isActive: true },
+            select: {
+                id: true,
+                name: true,
+                isActive: true,
+                subscriptionExpiresAt: true,
+            },
         });
         if (!school) {
             throw new common_1.ForbiddenException('Invalid school');
         }
-        if (!school.isActive) {
-            throw new common_1.ForbiddenException('School is deactivated');
-        }
+        (0, school_access_policy_1.assertSchoolAccessOrThrow)({
+            schoolId: school.id,
+            schoolName: school.name,
+            isActive: school.isActive,
+            subscriptionExpiresAt: school.subscriptionExpiresAt,
+        });
         request.schoolId = school.id;
         // Update the AsyncLocalStorage store with the verified schoolId and user context
         const store = context_1.requestContext.getStore();
@@ -211429,6 +211449,70 @@ exports.TenantMiddleware = TenantMiddleware;
 exports.TenantMiddleware = TenantMiddleware = __decorate([
     (0, common_1.Injectable)()
 ], TenantMiddleware);
+
+
+/***/ },
+
+/***/ 87203
+(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SchoolAccessCode = void 0;
+exports.evaluateSchoolAccess = evaluateSchoolAccess;
+exports.assertSchoolAccessOrThrow = assertSchoolAccessOrThrow;
+const common_1 = __webpack_require__(47305);
+exports.SchoolAccessCode = {
+    PLAN_EXPIRED: 'PLAN_EXPIRED',
+    SCHOOL_SUSPENDED: 'SCHOOL_SUSPENDED',
+};
+function toDate(value) {
+    if (!value)
+        return null;
+    if (value instanceof Date)
+        return Number.isNaN(value.getTime()) ? null : value;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+function evaluateSchoolAccess(input) {
+    if (input.isActive === false) {
+        return {
+            allowed: false,
+            code: exports.SchoolAccessCode.SCHOOL_SUSPENDED,
+            message: 'This school is suspended. Please contact support.',
+            meta: {
+                schoolId: input.schoolId ?? null,
+                schoolName: input.schoolName ?? null,
+            },
+        };
+    }
+    const expiry = toDate(input.subscriptionExpiresAt);
+    if (expiry && expiry.getTime() <= Date.now()) {
+        return {
+            allowed: false,
+            code: exports.SchoolAccessCode.PLAN_EXPIRED,
+            message: 'Your subscription plan has expired. Please renew to continue.',
+            meta: {
+                schoolId: input.schoolId ?? null,
+                schoolName: input.schoolName ?? null,
+                subscriptionExpiresAt: expiry.toISOString(),
+            },
+        };
+    }
+    return { allowed: true };
+}
+function assertSchoolAccessOrThrow(input) {
+    const decision = evaluateSchoolAccess(input);
+    if (decision.allowed) {
+        return;
+    }
+    throw new common_1.ForbiddenException({
+        message: decision.message,
+        code: decision.code,
+        meta: decision.meta,
+    });
+}
 
 
 /***/ },
@@ -214574,6 +214658,7 @@ const bcrypt = __importStar(__webpack_require__(88016));
 const prisma_service_1 = __webpack_require__(29105);
 const context_1 = __webpack_require__(89347);
 const google_auth_library_1 = __webpack_require__(63459);
+const school_access_policy_1 = __webpack_require__(87203);
 let AuthService = class AuthService {
     prisma;
     jwtService;
@@ -214622,7 +214707,7 @@ let AuthService = class AuthService {
             const school = await this.prisma.school.findUnique({
                 where: { slug: schoolSlug },
             });
-            if (school && school.isActive) {
+            if (school) {
                 schoolId = school.id;
             }
         }
@@ -214637,12 +214722,21 @@ let AuthService = class AuthService {
             where: userQuery,
             include: {
                 role: { select: { slug: true } },
-                school: { select: { id: true, isActive: true, name: true, logo: true, settings: true } },
+                school: {
+                    select: {
+                        id: true,
+                        isActive: true,
+                        name: true,
+                        logo: true,
+                        settings: true,
+                        subscriptionExpiresAt: true,
+                    },
+                },
                 campus: { select: { id: true, name: true, code: true } },
                 teacher: { select: { id: true, classTeacherOfId: true } },
             },
         });
-        if (!user || !user.school?.isActive) {
+        if (!user || !user.school) {
             throw new common_1.UnauthorizedException('Invalid email or password');
         }
         if (!user.passwordHash) {
@@ -214652,6 +214746,12 @@ let AuthService = class AuthService {
         if (!isPasswordValid) {
             throw new common_1.UnauthorizedException('Invalid email or password');
         }
+        (0, school_access_policy_1.assertSchoolAccessOrThrow)({
+            schoolId: user.school.id,
+            schoolName: user.school.name,
+            isActive: user.school.isActive,
+            subscriptionExpiresAt: user.school.subscriptionExpiresAt,
+        });
         // Update last login
         await this.prisma.unscopedClient.user.update({
             where: { id: user.id },
@@ -214706,7 +214806,7 @@ let AuthService = class AuthService {
                 const school = await this.prisma.school.findUnique({
                     where: { slug: schoolSlug },
                 });
-                if (school && school.isActive) {
+                if (school) {
                     schoolId = school.id;
                 }
             }
@@ -214720,14 +214820,29 @@ let AuthService = class AuthService {
                 where: userQuery,
                 include: {
                     role: { select: { slug: true } },
-                    school: { select: { id: true, isActive: true, name: true, logo: true, settings: true } },
+                    school: {
+                        select: {
+                            id: true,
+                            isActive: true,
+                            name: true,
+                            logo: true,
+                            settings: true,
+                            subscriptionExpiresAt: true,
+                        },
+                    },
                     campus: { select: { id: true, name: true, code: true } },
                     teacher: { select: { id: true, classTeacherOfId: true } },
                 },
             });
-            if (!user || !user.school?.isActive) {
-                throw new common_1.UnauthorizedException('This Google account is not registered to any active school. Please contact your administrator.');
+            if (!user || !user.school) {
+                throw new common_1.UnauthorizedException('This Google account is not registered to any school. Please contact your administrator.');
             }
+            (0, school_access_policy_1.assertSchoolAccessOrThrow)({
+                schoolId: user.school.id,
+                schoolName: user.school.name,
+                isActive: user.school.isActive,
+                subscriptionExpiresAt: user.school.subscriptionExpiresAt,
+            });
             if (user.googleId !== googleId) {
                 await this.prisma.unscopedClient.user.update({
                     where: { id: user.id },
@@ -214785,9 +214900,15 @@ let AuthService = class AuthService {
         const school = await this.prisma.school.findUnique({
             where: { slug: schoolSlug },
         });
-        if (!school || !school.isActive) {
-            throw new common_1.NotFoundException('School not found or is deactivated');
+        if (!school) {
+            throw new common_1.NotFoundException('School not found');
         }
+        (0, school_access_policy_1.assertSchoolAccessOrThrow)({
+            schoolId: school.id,
+            schoolName: school.name,
+            isActive: school.isActive,
+            subscriptionExpiresAt: school.subscriptionExpiresAt,
+        });
         return context_1.requestContext.run({
             schoolId: school.id,
             isPlatformAdmin: false,
@@ -214870,11 +214991,28 @@ let AuthService = class AuthService {
                 include: {
                     role: { select: { slug: true } },
                     teacher: { select: { id: true, classTeacherOfId: true } },
+                    school: {
+                        select: {
+                            id: true,
+                            name: true,
+                            isActive: true,
+                            subscriptionExpiresAt: true,
+                        },
+                    },
                 },
             });
             if (!user || !user.isActive) {
                 throw new common_1.UnauthorizedException('User not found or deactivated');
             }
+            if (!user.school) {
+                throw new common_1.UnauthorizedException('School not found');
+            }
+            (0, school_access_policy_1.assertSchoolAccessOrThrow)({
+                schoolId: user.school.id,
+                schoolName: user.school.name,
+                isActive: user.school.isActive,
+                subscriptionExpiresAt: user.school.subscriptionExpiresAt,
+            });
             return this.generateTokens({
                 sub: user.id,
                 schoolId: user.schoolId,
@@ -214883,7 +215021,10 @@ let AuthService = class AuthService {
                 teacherId: user.teacher?.id || null,
             });
         }
-        catch {
+        catch (error) {
+            if (typeof error?.getStatus === 'function') {
+                throw error;
+            }
             throw new common_1.UnauthorizedException('Invalid or expired refresh token');
         }
     }
@@ -214930,7 +215071,17 @@ let AuthService = class AuthService {
                 schoolId: true,
                 campusId: true,
                 mustChangePassword: true,
-                school: { select: { id: true, name: true, slug: true, logo: true, settings: true } },
+                school: {
+                    select: {
+                        id: true,
+                        name: true,
+                        slug: true,
+                        logo: true,
+                        settings: true,
+                        isActive: true,
+                        subscriptionExpiresAt: true,
+                    },
+                },
                 role: { select: { id: true, name: true, slug: true } },
                 campus: { select: { id: true, name: true, code: true } },
                 teacher: { select: { id: true, classTeacherOfId: true } },
@@ -214943,6 +215094,15 @@ let AuthService = class AuthService {
         if (user.schoolId !== schoolId) {
             throw new common_1.UnauthorizedException('User does not belong to this school');
         }
+        if (!user.school) {
+            throw new common_1.UnauthorizedException('School not found');
+        }
+        (0, school_access_policy_1.assertSchoolAccessOrThrow)({
+            schoolId: user.school.id,
+            schoolName: user.school.name,
+            isActive: user.school.isActive,
+            subscriptionExpiresAt: user.school.subscriptionExpiresAt,
+        });
         const teacherId = user.teacher?.id || null;
         const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(teacherId, schoolId, user.teacher?.classTeacherOfId || null);
         return {
@@ -215028,14 +215188,28 @@ let AuthService = class AuthService {
             where: { email: currentUser.email, schoolId: targetSchoolId, isActive: true },
             include: {
                 role: { select: { slug: true, name: true } },
-                school: { select: { id: true, name: true, slug: true, isActive: true } },
+                school: {
+                    select: {
+                        id: true,
+                        name: true,
+                        slug: true,
+                        isActive: true,
+                        subscriptionExpiresAt: true,
+                    },
+                },
                 teacher: { select: { id: true, classTeacherOfId: true } },
             },
         });
         if (!targetUser)
             throw new common_1.UnauthorizedException('No access to this school');
-        if (!targetUser.school?.isActive)
-            throw new common_1.UnauthorizedException('This school is suspended');
+        if (!targetUser.school)
+            throw new common_1.UnauthorizedException('School not found');
+        (0, school_access_policy_1.assertSchoolAccessOrThrow)({
+            schoolId: targetUser.school.id,
+            schoolName: targetUser.school.name,
+            isActive: targetUser.school.isActive,
+            subscriptionExpiresAt: targetUser.school.subscriptionExpiresAt,
+        });
         // Generate new tokens for the target school context
         const tokens = this.generateTokens({
             sub: targetUser.id,
@@ -225990,6 +226164,7 @@ const dto_1 = __webpack_require__(70549);
 const bcrypt = __importStar(__webpack_require__(88016));
 const jwt_1 = __webpack_require__(88403);
 const config_1 = __webpack_require__(25425);
+const school_access_policy_1 = __webpack_require__(87203);
 let PlatformService = class PlatformService {
     prisma;
     jwtService;
@@ -226433,9 +226608,12 @@ let PlatformService = class PlatformService {
     // ═══════════════════════════════════════════════════════════════
     async impersonateSchool(schoolId) {
         const school = await this.findSchoolById(schoolId);
-        if (!school.isActive) {
-            throw new common_1.ForbiddenException('Cannot impersonate a suspended school');
-        }
+        (0, school_access_policy_1.assertSchoolAccessOrThrow)({
+            schoolId: school.id,
+            schoolName: school.name,
+            isActive: school.isActive,
+            subscriptionExpiresAt: school.subscriptionExpiresAt,
+        });
         // Find the super_admin user for this school
         const adminRole = await this.prisma.role.findFirst({
             where: { slug: 'super_admin', schoolId, campusId: null },

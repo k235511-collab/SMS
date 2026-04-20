@@ -14,7 +14,7 @@ import { NextResponse, type NextRequest } from 'next/server'
  * Teachers use the same /dashboard layout — scoped by permissions + class assignments
  */
 
-const PUBLIC_ROUTES = new Set(['/', '/login', '/register', '/forgot-password'])
+const PUBLIC_ROUTES = new Set(['/', '/login', '/register', '/forgot-password', '/plan-expired'])
 const AUTH_ROUTES = new Set(['/login', '/register'])
 
 const ACCESS_TOKEN_COOKIE = 'sms_access_token'
@@ -46,10 +46,12 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value
   const refreshToken = request.cookies.get(REFRESH_TOKEN_COOKIE)?.value
+  const hasAccessToken = !!accessToken
+  const hasRefreshToken = !!refreshToken
 
   // User has a valid session if either token exists
   // (the client-side api-client will handle refreshing the access token)
-  const hasSession = !!accessToken || !!refreshToken
+  const hasSession = hasAccessToken || hasRefreshToken
 
   const isPublicRoute = PUBLIC_ROUTES.has(pathname)
   const isAuthRoute = AUTH_ROUTES.has(pathname)
@@ -62,7 +64,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  if (hasSession) {
+  if (hasSession && hasAccessToken) {
     const payload = decodeJwtPayload(accessToken)
 
     // Authenticated user trying to access login/register → redirect to role-appropriate home

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import { requestContext } from '../context'
+import { assertSchoolAccessOrThrow } from '../policies/school-access.policy'
 
 @Injectable()
 export class TenantGuard implements CanActivate {
@@ -34,16 +35,24 @@ export class TenantGuard implements CanActivate {
 
     const school = await this.prisma.school.findUnique({
       where: { id: schoolId },
-      select: { id: true, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        isActive: true,
+        subscriptionExpiresAt: true,
+      },
     })
 
     if (!school) {
       throw new ForbiddenException('Invalid school')
     }
 
-    if (!school.isActive) {
-      throw new ForbiddenException('School is deactivated')
-    }
+    assertSchoolAccessOrThrow({
+      schoolId: school.id,
+      schoolName: school.name,
+      isActive: school.isActive,
+      subscriptionExpiresAt: school.subscriptionExpiresAt,
+    })
 
     request.schoolId = school.id
 

@@ -10,6 +10,7 @@ import * as bcrypt from 'bcryptjs'
 import { PrismaService } from '../../prisma/prisma.service'
 import { requestContext } from '../../common/context'
 import { OAuth2Client } from 'google-auth-library'
+import { assertSchoolAccessOrThrow } from '../../common/policies/school-access.policy'
 
 export interface AuthResult {
   accessToken: string
@@ -95,7 +96,7 @@ export class AuthService {
       const school = await this.prisma.school.findUnique({
         where: { slug: schoolSlug },
       })
-      if (school && school.isActive) {
+      if (school) {
         schoolId = school.id
       }
     }
@@ -112,13 +113,22 @@ export class AuthService {
       where: userQuery,
       include: {
         role: { select: { slug: true } },
-        school: { select: { id: true, isActive: true, name: true, logo: true, settings: true } },
+        school: {
+          select: {
+            id: true,
+            isActive: true,
+            name: true,
+            logo: true,
+            settings: true,
+            subscriptionExpiresAt: true,
+          },
+        },
         campus: { select: { id: true, name: true, code: true } },
         teacher: { select: { id: true, classTeacherOfId: true } },
       },
     })
 
-    if (!user || !user.school?.isActive) {
+    if (!user || !user.school) {
       throw new UnauthorizedException('Invalid email or password')
     }
 
@@ -130,6 +140,13 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid email or password')
     }
+
+    assertSchoolAccessOrThrow({
+      schoolId: user.school.id,
+      schoolName: user.school.name,
+      isActive: user.school.isActive,
+      subscriptionExpiresAt: user.school.subscriptionExpiresAt,
+    })
 
     // Update last login
     await this.prisma.unscopedClient.user.update({
@@ -196,7 +213,7 @@ export class AuthService {
         const school = await this.prisma.school.findUnique({
           where: { slug: schoolSlug },
         })
-        if (school && school.isActive) {
+        if (school) {
           schoolId = school.id
         }
       }
@@ -212,17 +229,33 @@ export class AuthService {
         where: userQuery,
         include: {
           role: { select: { slug: true } },
-          school: { select: { id: true, isActive: true, name: true, logo: true, settings: true } },
+          school: {
+            select: {
+              id: true,
+              isActive: true,
+              name: true,
+              logo: true,
+              settings: true,
+              subscriptionExpiresAt: true,
+            },
+          },
           campus: { select: { id: true, name: true, code: true } },
           teacher: { select: { id: true, classTeacherOfId: true } },
         },
       })
 
-      if (!user || !user.school?.isActive) {
+      if (!user || !user.school) {
         throw new UnauthorizedException(
-          'This Google account is not registered to any active school. Please contact your administrator.',
+          'This Google account is not registered to any school. Please contact your administrator.',
         )
       }
+
+      assertSchoolAccessOrThrow({
+        schoolId: user.school.id,
+        schoolName: user.school.name,
+        isActive: user.school.isActive,
+        subscriptionExpiresAt: user.school.subscriptionExpiresAt,
+      })
 
       if (user.googleId !== googleId) {
         await this.prisma.unscopedClient.user.update({
@@ -297,9 +330,16 @@ export class AuthService {
       where: { slug: schoolSlug },
     })
 
-    if (!school || !school.isActive) {
-      throw new NotFoundException('School not found or is deactivated')
+    if (!school) {
+      throw new NotFoundException('School not found')
     }
+
+    assertSchoolAccessOrThrow({
+      schoolId: school.id,
+      schoolName: school.name,
+      isActive: school.isActive,
+      subscriptionExpiresAt: school.subscriptionExpiresAt,
+    })
 
     return requestContext.run(
       {
@@ -398,12 +438,31 @@ export class AuthService {
         include: {
           role: { select: { slug: true } },
           teacher: { select: { id: true, classTeacherOfId: true } },
+          school: {
+            select: {
+              id: true,
+              name: true,
+              isActive: true,
+              subscriptionExpiresAt: true,
+            },
+          },
         },
       })
 
       if (!user || !user.isActive) {
         throw new UnauthorizedException('User not found or deactivated')
       }
+
+      if (!user.school) {
+        throw new UnauthorizedException('School not found')
+      }
+
+      assertSchoolAccessOrThrow({
+        schoolId: user.school.id,
+        schoolName: user.school.name,
+        isActive: user.school.isActive,
+        subscriptionExpiresAt: user.school.subscriptionExpiresAt,
+      })
 
       return this.generateTokens({
         sub: user.id,
@@ -412,7 +471,10 @@ export class AuthService {
         role: user.role?.slug,
         teacherId: (user as any).teacher?.id || null,
       })
-    } catch {
+    } catch (error: any) {
+      if (typeof error?.getStatus === 'function') {
+        throw error
+      }
       throw new UnauthorizedException('Invalid or expired refresh token')
     }
   }
@@ -465,7 +527,17 @@ export class AuthService {
         schoolId: true,
         campusId: true,
         mustChangePassword: true,
-        school: { select: { id: true, name: true, slug: true, logo: true, settings: true } },
+        school: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            settings: true,
+            isActive: true,
+            subscriptionExpiresAt: true,
+          },
+        },
         role: { select: { id: true, name: true, slug: true } },
         campus: { select: { id: true, name: true, code: true } },
         teacher: { select: { id: true, classTeacherOfId: true } },
@@ -480,6 +552,17 @@ export class AuthService {
     if (user.schoolId !== schoolId) {
       throw new UnauthorizedException('User does not belong to this school')
     }
+
+    if (!user.school) {
+      throw new UnauthorizedException('School not found')
+    }
+
+    assertSchoolAccessOrThrow({
+      schoolId: user.school.id,
+      schoolName: user.school.name,
+      isActive: user.school.isActive,
+      subscriptionExpiresAt: user.school.subscriptionExpiresAt,
+    })
 
     const teacherId = (user as any).teacher?.id || null
     const classTeacherOfId = await this.resolveLegacyClassTeacherOfId(
@@ -576,13 +659,28 @@ export class AuthService {
       where: { email: currentUser.email, schoolId: targetSchoolId, isActive: true },
       include: {
         role: { select: { slug: true, name: true } },
-        school: { select: { id: true, name: true, slug: true, isActive: true } },
+        school: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            isActive: true,
+            subscriptionExpiresAt: true,
+          },
+        },
         teacher: { select: { id: true, classTeacherOfId: true } },
       },
     })
 
     if (!targetUser) throw new UnauthorizedException('No access to this school')
-    if (!targetUser.school?.isActive) throw new UnauthorizedException('This school is suspended')
+    if (!targetUser.school) throw new UnauthorizedException('School not found')
+
+    assertSchoolAccessOrThrow({
+      schoolId: targetUser.school.id,
+      schoolName: targetUser.school.name,
+      isActive: targetUser.school.isActive,
+      subscriptionExpiresAt: targetUser.school.subscriptionExpiresAt,
+    })
 
     // Generate new tokens for the target school context
     const tokens = this.generateTokens({

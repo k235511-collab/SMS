@@ -6,6 +6,22 @@ import { Card, CardBody } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -87,11 +103,23 @@ interface SchoolDetail {
   onboarding?: OnboardingStatus
 }
 
+interface PlanOption {
+  id: string
+  name: string
+  price: number
+  durationDays?: number | null
+}
+
 export default function SchoolDetailPage() {
   const params = useParams()
   const router = useRouter()
   const [school, setSchool] = useState<SchoolDetail | null>(null)
+  const [plans, setPlans] = useState<PlanOption[]>([])
   const [loading, setLoading] = useState(true)
+  const [renewOpen, setRenewOpen] = useState(false)
+  const [renewMode, setRenewMode] = useState<'existing' | 'new'>('existing')
+  const [selectedPlanId, setSelectedPlanId] = useState('')
+  const [renewing, setRenewing] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
@@ -104,7 +132,15 @@ export default function SchoolDetailPage() {
     setLoading(false)
   }, [params.id])
 
+  const fetchPlans = useCallback(async () => {
+    const res = await api.get<PlanOption[]>('/platform/plans')
+    if (res.success && Array.isArray(res.data)) {
+      setPlans(res.data)
+    }
+  }, [])
+
   useEffect(() => { fetchSchool() }, [fetchSchool])
+  useEffect(() => { fetchPlans() }, [fetchPlans])
 
   const handleToggle = async () => {
     if (!school) return
@@ -144,6 +180,41 @@ export default function SchoolDetailPage() {
       window.location.href = '/dashboard'
     } else {
       toast.error(res.message || 'Failed to impersonate')
+    }
+  }
+
+  const handleOpenRenew = () => {
+    if (school?.subscriptionPlan?.id) {
+      setRenewMode('existing')
+      setSelectedPlanId(school.subscriptionPlan.id)
+    } else {
+      setRenewMode('new')
+      setSelectedPlanId('')
+    }
+    setRenewOpen(true)
+  }
+
+  const handleRenew = async () => {
+    if (!school) return
+
+    const planId = renewMode === 'existing' ? school.subscriptionPlan?.id : selectedPlanId
+    if (!planId) {
+      toast.error('Please choose a subscription plan first')
+      return
+    }
+
+    setRenewing(true)
+    try {
+      const res = await api.patch(`/platform/schools/${school.id}`, { subscriptionPlanId: planId })
+      if (res.success) {
+        toast.success('Subscription updated successfully')
+        setRenewOpen(false)
+        await fetchSchool()
+      } else {
+        toast.error(res.message || 'Failed to update subscription')
+      }
+    } finally {
+      setRenewing(false)
     }
   }
 
@@ -194,6 +265,15 @@ export default function SchoolDetailPage() {
   const expiryDate = school.subscriptionExpiresAt
     ? new Date(school.subscriptionExpiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : 'Lifetime'
+  const expiryDateObj = school.subscriptionExpiresAt ? new Date(school.subscriptionExpiresAt) : null
+  const hasValidExpiryDate = !!expiryDateObj && !Number.isNaN(expiryDateObj.getTime())
+  const now = new Date()
+  const diffMs = hasValidExpiryDate ? expiryDateObj.getTime() - now.getTime() : null
+  const isSubscriptionExpired = hasValidExpiryDate && diffMs != null ? diffMs < 0 : false
+  const remainingDays = hasValidExpiryDate && diffMs != null ? Math.ceil(Math.max(diffMs, 0) / 86400000) : null
+  const expiredDays = hasValidExpiryDate && diffMs != null && diffMs < 0
+    ? Math.ceil(Math.abs(diffMs) / 86400000)
+    : 0
 
   const stats = [
     { label: 'Users', value: school._count?.users || 0, icon: Users, color: 'text-blue-600 bg-blue-500/10 dark:bg-blue-500/20' },
@@ -318,7 +398,18 @@ export default function SchoolDetailPage() {
         <div className="space-y-6">
           <Card>
             <CardBody className="p-6">
-              <h2 className="mb-4 text-lg font-semibold text-foreground">Subscription Plan</h2>
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <h2 className="text-lg font-semibold text-foreground">Subscription Plan</h2>
+                <Button
+                  size="sm"
+                  variant={isSubscriptionExpired || !school.subscriptionPlan ? 'primary' : 'secondary'}
+                  onClick={handleOpenRenew}
+                >
+                  {school.subscriptionPlan
+                    ? (isSubscriptionExpired ? 'Renew Now' : 'Renew or Upgrade')
+                    : 'Assign Plan'}
+                </Button>
+              </div>
               {school.subscriptionPlan ? (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -326,9 +417,25 @@ export default function SchoolDetailPage() {
                     <Badge variant="secondary">PKR {school.subscriptionPlan.price}/mo</Badge>
                   </div>
                   {school.subscriptionExpiresAt && (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground bg-amber-50 dark:bg-amber-500/10 p-2 rounded border border-amber-200 dark:border-amber-500/20">
+                    <div className={`flex items-center justify-between gap-2 text-xs p-2 rounded border ${
+                      isSubscriptionExpired
+                        ? 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/20'
+                        : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/20'
+                    }`}>
+                      <div className="flex items-center gap-2">
                       <CalendarDays className="h-3 w-3" />
                       <span>Expires on: {new Date(school.subscriptionExpiresAt).toLocaleDateString()}</span>
+                      </div>
+                      <Badge variant={isSubscriptionExpired ? 'destructive' : 'secondary'}>
+                        {isSubscriptionExpired
+                          ? `Expired ${expiredDays} day${expiredDays === 1 ? '' : 's'} ago`
+                          : `${remainingDays ?? 0} day${remainingDays === 1 ? '' : 's'} left`}
+                      </Badge>
+                    </div>
+                  )}
+                  {!school.subscriptionExpiresAt && (
+                    <div className="flex items-center justify-between gap-2 rounded border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+                      <span>This school is on a lifetime subscription.</span>
                     </div>
                   )}
                   <div className="space-y-2 text-xs text-muted-foreground">
@@ -500,6 +607,78 @@ export default function SchoolDetailPage() {
       </div>
 
       {/* Delete Confirmation */}
+      <Dialog open={renewOpen} onOpenChange={setRenewOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{school?.subscriptionPlan ? 'Renew or Upgrade Subscription' : 'Assign Subscription Plan'}</DialogTitle>
+            <DialogDescription>
+              {school?.subscriptionPlan
+                ? 'Choose whether to renew the current plan or switch to another plan for upgrade or downgrade.'
+                : 'Select a subscription plan to activate this school.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {school?.subscriptionPlan && (
+              <div className="space-y-2">
+                <Label>Renewal Option</Label>
+                <Select value={renewMode} onValueChange={(value) => setRenewMode(value as 'existing' | 'new')}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select renewal option" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="existing">Renew existing plan ({school.subscriptionPlan.name})</SelectItem>
+                    <SelectItem value="new">Choose new plan (upgrade or downgrade)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {(renewMode === 'new' || !school?.subscriptionPlan) && (
+              <div className="space-y-2">
+                <Label>Select Plan</Label>
+                <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a plan" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {plans.map((plan) => (
+                      <SelectItem key={plan.id} value={plan.id}>
+                        {plan.name} · PKR {plan.price}/mo · {plan.durationDays ? `${plan.durationDays} days` : 'lifetime'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {plans.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No subscription plans are available yet.</p>
+                )}
+              </div>
+            )}
+
+            {school?.subscriptionPlan && renewMode === 'existing' && (
+              <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                Renewing the current plan will extend expiry based on that plan duration from today.
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenewOpen(false)} disabled={renewing}>Cancel</Button>
+            <Button
+              onClick={handleRenew}
+              disabled={
+                renewing ||
+                ((renewMode === 'new' || !school?.subscriptionPlan) && !selectedPlanId)
+              }
+            >
+              {renewing
+                ? 'Saving...'
+                : (school?.subscriptionPlan && renewMode === 'existing' ? 'Renew Current Plan' : 'Save Subscription')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

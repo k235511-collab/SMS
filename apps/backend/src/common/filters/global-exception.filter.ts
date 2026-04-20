@@ -20,6 +20,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR
     let message = 'Internal server error'
     let errors: Record<string, string[]> | undefined
+    let code: string | undefined
+    let meta: Record<string, unknown> | undefined
 
     if (exception instanceof HttpException) {
       status = exception.getStatus()
@@ -30,6 +32,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       } else if (typeof exResponse === 'object') {
         const obj = exResponse as Record<string, unknown>
         message = (obj.message as string) || exception.message
+        code = typeof obj.code === 'string' ? obj.code : undefined
+        meta =
+          obj.meta && typeof obj.meta === 'object' && !Array.isArray(obj.meta)
+            ? (obj.meta as Record<string, unknown>)
+            : undefined
 
         // Handle class-validator errors — include details in message
         if (Array.isArray(obj.message)) {
@@ -42,6 +49,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       if (status >= 500) {
         message = 'Something went wrong. Please try again later.'
         errors = undefined
+        code = undefined
+        meta = undefined
       }
     } else if (exception instanceof Error) {
       this.logger.error(
@@ -56,6 +65,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       success: false,
       statusCode: status,
       message,
+      code,
+      meta,
       errors,
       path: request.url,
       method: request.method,

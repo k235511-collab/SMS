@@ -7,6 +7,8 @@ export interface ApiResponse<T = unknown> {
   success: boolean
   data?: T
   message?: string
+  code?: string
+  meta?: Record<string, unknown>
   errors?: Record<string, string[]>
   statusCode?: number
 }
@@ -14,6 +16,8 @@ export interface ApiResponse<T = unknown> {
 export interface ApiError {
   message: string
   statusCode: number
+  code?: string
+  meta?: Record<string, unknown>
   errors?: Record<string, string[]>
 }
 
@@ -69,6 +73,55 @@ function getCampusId(): string | undefined {
   return Cookies.get('sms_selected_campus_id')
 }
 
+const PLAN_EXPIRED_CODE = 'PLAN_EXPIRED'
+const PUBLIC_PATHS = new Set(['/', '/login', '/register', '/forgot-password', '/plan-expired'])
+
+let lastRefreshFailure:
+  | { code?: string; message?: string; meta?: Record<string, unknown> }
+  | null = null
+
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
+function readMetaString(meta: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = meta?.[key]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function buildPlanExpiredUrl(
+  message?: string,
+  meta?: Record<string, unknown>,
+  code = PLAN_EXPIRED_CODE,
+): string {
+  const params = new URLSearchParams()
+  params.set('code', code)
+
+  const schoolName = readMetaString(meta, 'schoolName')
+  const expiry = readMetaString(meta, 'subscriptionExpiresAt')
+
+  if (message) params.set('message', message)
+  if (schoolName) params.set('schoolName', schoolName)
+  if (expiry) params.set('expiry', expiry)
+
+  const query = params.toString()
+  return query ? `/plan-expired?${query}` : '/plan-expired'
+}
+
+function maybeRedirectToPlanExpired(
+  code?: string,
+  message?: string,
+  meta?: Record<string, unknown>,
+) {
+  if (typeof window === 'undefined') return
+  if (code !== PLAN_EXPIRED_CODE) return
+  if (window.location.pathname === '/plan-expired') return
+  if (PUBLIC_PATHS.has(window.location.pathname)) return
+
+  window.location.href = buildPlanExpiredUrl(message, meta)
+}
+
 // ─── Token refresh logic ────────────────────────────────────────────────────
 
 let refreshPromise: Promise<string | null> | null = null
@@ -84,11 +137,29 @@ async function refreshAccessToken(): Promise<string | null> {
       body: JSON.stringify({ refreshToken }),
     })
 
-    if (!res.ok) return null
+    if (!res.ok) {
+      const failurePayload = await res.json().catch(() => ({}))
+      const failureCode =
+        typeof failurePayload?.code === 'string' ? failurePayload.code : undefined
+      const failureMessage =
+        typeof failurePayload?.message === 'string' ? failurePayload.message : undefined
+      const failureMeta = toRecord(failurePayload?.meta)
+
+      lastRefreshFailure = {
+        code: failureCode,
+        message: failureMessage,
+        meta: failureMeta,
+      }
+
+      maybeRedirectToPlanExpired(failureCode, failureMessage, failureMeta)
+      return null
+    }
 
     const envelope = await res.json().catch(() => ({}))
     const data = envelope.data || envelope
     const { accessToken, refreshToken: newRefresh } = data
+
+    lastRefreshFailure = null
 
     Cookies.set(env.ACCESS_TOKEN_COOKIE, accessToken, {
       expires: env.ACCESS_TOKEN_MAX_AGE / 86400,
@@ -106,6 +177,7 @@ async function refreshAccessToken(): Promise<string | null> {
 
     return accessToken as string
   } catch {
+    lastRefreshFailure = null
     return null
   }
 }
@@ -210,10 +282,18 @@ export async function apiClient<T>(
           clearTimeout(retryTimer)
           const retryData = await retryRes.json().catch(() => ({}))
           if (!retryRes.ok) {
+            const retryCode =
+              typeof retryData?.code === 'string' ? retryData.code : undefined
+            const retryMeta = toRecord(retryData?.meta)
+
+            maybeRedirectToPlanExpired(retryCode, retryData?.message, retryMeta)
+
             return {
               success: false,
               message: retryData.message || 'Request failed after token refresh',
               statusCode: retryRes.status,
+              code: retryCode,
+              meta: retryMeta,
               errors: retryData.errors,
             }
           }
@@ -225,6 +305,23 @@ export async function apiClient<T>(
             return { success: false, message: 'Retry request timed out', statusCode: 408 }
           }
           return { success: false, message: 'Retry request failed', statusCode: 0 }
+        }
+      }
+
+      if (lastRefreshFailure?.code === PLAN_EXPIRED_CODE) {
+        maybeRedirectToPlanExpired(
+          lastRefreshFailure.code,
+          lastRefreshFailure.message,
+          lastRefreshFailure.meta,
+        )
+        return {
+          success: false,
+          message:
+            lastRefreshFailure.message ||
+            'Your subscription plan has expired. Please renew to continue.',
+          statusCode: 403,
+          code: lastRefreshFailure.code,
+          meta: lastRefreshFailure.meta,
         }
       }
 
@@ -248,12 +345,19 @@ export async function apiClient<T>(
       const msg = Array.isArray(data.message)
         ? data.message.join(', ')
         : data.message || `Request failed (${res.status})`
+      const code = typeof data.code === 'string' ? data.code : undefined
+      const meta = toRecord(data.meta)
+
+      maybeRedirectToPlanExpired(code, msg, meta)
+
       const safeMessage =
         res.status >= 500 ? 'Something went wrong. Please try again later.' : msg
       return {
         success: false,
         message: safeMessage,
         statusCode: res.status,
+        code,
+        meta,
         errors: data.errors,
       }
     }

@@ -10,6 +10,12 @@ import type {
   PermissionSlug,
 } from '@/lib/auth-types'
 
+type AuthErrorMeta = Record<string, unknown>
+
+function toAuthError(message: string, statusCode?: number, code?: string, meta?: AuthErrorMeta) {
+  return new AuthError(message, statusCode, code, meta)
+}
+
 // ─── Cookie management ──────────────────────────────────────────────────────
 
 function setAuthCookies(result: AuthResult): void {
@@ -66,7 +72,7 @@ export const authService = {
     })
 
     if (!res.success || !res.data) {
-      throw new AuthError(res.message || 'Login failed', res.statusCode)
+      throw toAuthError(res.message || 'Login failed', res.statusCode, res.code, res.meta)
     }
 
     setAuthCookies(res.data)
@@ -83,7 +89,7 @@ export const authService = {
     })
 
     if (!res.success || !res.data) {
-      throw new AuthError(res.message || 'Google Login failed', res.statusCode)
+      throw toAuthError(res.message || 'Google Login failed', res.statusCode, res.code, res.meta)
     }
 
     setAuthCookies(res.data)
@@ -99,7 +105,7 @@ export const authService = {
     })
 
     if (!res.success || !res.data) {
-      throw new AuthError(res.message || 'Registration failed', res.statusCode)
+      throw toAuthError(res.message || 'Registration failed', res.statusCode, res.code, res.meta)
     }
 
     setAuthCookies(res.data)
@@ -116,12 +122,22 @@ export const authService = {
     }
   },
 
+  /** Clear auth cookies without triggering a redirect */
+  clearSession(): void {
+    clearAuthCookies()
+  },
+
   /**
    * Fetch the current user's profile (validates that the session is alive).
    */
   async getMe(): Promise<AuthUser | null> {
     const res = await api.get<AuthUser>('/auth/me')
-    if (!res.success || !res.data) return null
+    if (!res.success || !res.data) {
+      if (res.statusCode === 401) {
+        return null
+      }
+      throw toAuthError(res.message || 'Failed to fetch profile', res.statusCode, res.code, res.meta)
+    }
 
     return res.data
   },
@@ -157,7 +173,7 @@ export const authService = {
   async switchSchool(schoolId: string): Promise<AuthUser> {
     const res = await api.post<AuthResult>('/auth/switch-school', { schoolId })
     if (!res.success || !res.data) {
-      throw new AuthError(res.message || 'Switch failed', res.statusCode)
+      throw toAuthError(res.message || 'Switch failed', res.statusCode, res.code, res.meta)
     }
     setAuthCookies(res.data)
     return res.data.user
@@ -182,6 +198,8 @@ export class AuthError extends Error {
   constructor(
     message: string,
     public readonly statusCode?: number,
+    public readonly code?: string,
+    public readonly meta?: AuthErrorMeta,
   ) {
     super(message)
     this.name = 'AuthError'
